@@ -148,6 +148,7 @@ async def interaction_join(interaction: discord.Interaction, custom_id: str, ski
             read_message_history=True,
         )
         await interaction.response.send_message(f"{channel.mention}に参加しました", ephemeral=True)
+        await channel.send(f"{user.mention}が参加しました")
     except discord.Forbidden:
         await interaction.response.send_message(
             "そのチャンネルの権限を編集する権限がありません。", ephemeral=True
