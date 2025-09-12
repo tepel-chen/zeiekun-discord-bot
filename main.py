@@ -87,13 +87,13 @@ async def ctf_create(interaction: discord.Interaction, name: str):
         )
     )
 
-    await interaction.followup.send(content=f"{channel.mention}が作成されました", ephemeral=True)
+    await interaction.followup.send(content=f"{channel.mention} ({channel.name})が作成されました", ephemeral=True)
 
     try:
         if isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
             await interaction.channel.send(
                 content=(
-                    f"CTF用プライベートチャンネル {channel.mention} が作成されました\n"
+                    f"CTF用プライベートチャンネル {channel.mention} ({channel.name}) が作成されました\n"
                     f"参加するには以下のボタンをクリックしてください"
                 ),
                 view=view,
