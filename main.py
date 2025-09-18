@@ -35,6 +35,7 @@ intents.members = True
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
+ctf_commands = app_commands.Group(name="ctf", description="CTF関連")
 
 
 async def ensure_category(guild: discord.Guild, name: str) -> discord.CategoryChannel:
@@ -60,7 +61,7 @@ async def create_private_channel(
 
 
 @app_commands.checks.has_role(CTF_CREATOR_ROLE_ID)
-@app_commands.command(name="ctfcreate", description="CTFチャンネルを作成する")
+@ctf_commands.command(name="create", description="CTFチャンネルを作成する")
 @app_commands.describe(name="CTFの名前")
 async def ctf_create(interaction: discord.Interaction, name: str):
     guild = interaction.guild
@@ -195,21 +196,14 @@ async def on_interaction(interaction: discord.Interaction):
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (id={bot.user.id})")
     try:
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-            await tree.sync(guild=guild)
-            logger.info("Slash commands synced to the guild.")
-        else:
-            await tree.sync()
-            logger.info("Slash commands globally synced.")
+        guild = discord.Object(id=GUILD_ID)
+        await tree.sync(guild=guild)
+        logger.info("Slash commands synced to the guild.")
     except Exception:
         logger.exception("Failed to sync commands")
 
-if GUILD_ID:
-    guild_obj = discord.Object(id=GUILD_ID)
-    tree.add_command(ctf_create, guild=guild_obj)
-else:
-    tree.add_command(ctf_create)
+guild_obj = discord.Object(id=GUILD_ID)
+tree.add_command(ctf_create, guild=guild_obj)
 
 if __name__ == "__main__":
     if not TOKEN or TOKEN == "YOUR_BOT_TOKEN":
