@@ -14,6 +14,7 @@ GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))
 CTF_CREATOR_ROLE_ID = int(os.getenv("CTF_CREATOR_ROLE_ID", "0"))
 CTF_ROLE_ID = int(os.getenv("CTF_ROLE_ID", "0"))
 CATEGORY_NAME = os.getenv("CTF_CATEGORY", "CTF")
+ARCHIVE_CATEGORY = os.getenv("ARCHIVE_CATEGORY", "ARCHIVE")
 
 RULE_TEMPLATE = """
 参加してくださりありがとうございます！始めてのご参加のようなので、ルールをご確認ください。
@@ -192,6 +193,26 @@ async def on_interaction(interaction: discord.Interaction):
     elif custom_id.startswith("ctf_join_new:"):
         await interaction_join_new(interaction, custom_id)
 
+@app_commands.checks.has_role(CTF_CREATOR_ROLE_ID)
+@ctf_commands.command(name="archive", description="CTFチャンネルをアーカイブする")
+async def move_category(interaction: discord.Interaction):
+    guild = interaction.guild
+    assert guild is not None, "This command must be used in a guild"
+    channel = interaction.channel
+
+    if isinstance(channel, discord.TextChannel) and channel.name.startswith("ctf-"):
+        category = await ensure_category(guild, ARCHIVE_CATEGORY)
+
+        await channel.edit(category=category)
+        await interaction.response.send_message(
+            f"✅ チャンネル {channel.mention} をカテゴリー「{ARCHIVE_CATEGORY}」へ移動しました。"
+        )
+    else:
+        await interaction.response.send_message(
+            "このコマンドはチャンネル名が `ctf-` から始まるチャンネルでのみ使用できます。",
+            ephemeral=True
+        )
+
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (id={bot.user.id})")
@@ -203,7 +224,7 @@ async def on_ready():
         logger.exception("Failed to sync commands")
 
 guild_obj = discord.Object(id=GUILD_ID)
-tree.add_command(ctf_create, guild=guild_obj)
+tree.add_command(ctf_commands, guild=guild_obj)
 
 if __name__ == "__main__":
     if not TOKEN or TOKEN == "YOUR_BOT_TOKEN":
