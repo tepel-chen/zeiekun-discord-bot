@@ -45,6 +45,9 @@ async def ensure_category(guild: discord.Guild, name: str) -> discord.CategoryCh
             return c
     return await guild.create_category(name)
 
+def get_participant_count(ch: discord.TextChannel) -> int:
+    return sum(1 for m in ch.members if not m.bot)
+
 async def create_private_channel(
     guild: discord.Guild,
     name: str,
@@ -93,10 +96,11 @@ async def ctf_create(interaction: discord.Interaction, name: str):
 
     try:
         if isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
+            count = get_participant_count(channel)
             await interaction.channel.send(
                 content=(
                     f"CTF用プライベートチャンネル {channel.mention} ({channel.name}) が作成されました\n"
-                    f"参加するには以下のボタンをクリックしてください"
+                    f"参加するには以下のボタンをクリックしてください (現在の参加人数: {count}人)"
                 ),
                 view=view,
             )
@@ -151,6 +155,17 @@ async def interaction_join(interaction: discord.Interaction, custom_id: str, ski
         )
         await interaction.response.send_message(f"{channel.mention}に参加しました", ephemeral=True)
         await channel.send(f"{user.mention}が参加しました")
+        try:
+            if interaction.message is not None:
+                view = interaction.message.components and discord.ui.View.from_message(interaction.message) or None
+                count = get_participant_count(channel)
+                new_content = (
+                    f"CTF用プライベートチャンネル {channel.mention} ({channel.name}) が作成されました\n"
+                    f"参加するには以下のボタンをクリックしてください (現在の参加人数: {count}人)"
+                )
+                await interaction.message.edit(content=new_content, view=view)
+        except Exception:
+            logger.exception("Failed to update join message with participant count")
     except discord.Forbidden:
         await interaction.response.send_message(
             "そのチャンネルの権限を編集する権限がありません。", ephemeral=True
