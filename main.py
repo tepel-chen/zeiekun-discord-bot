@@ -18,8 +18,8 @@ ARCHIVE_CATEGORY = os.getenv("ARCHIVE_CATEGORY", "ARCHIVE")
 
 RULE_TEMPLATE = """
 参加してくださりありがとうございます！始めてのご参加のようなので、ルールをご確認ください。
-* 問題に取り組むときは、できるだけスレッドを作成してください。スレッド名の例: 「XSS challenge(web)」
-* 問題が解けたらスレッドタイトルを編集して✅をつけて下さい。例: 「✅ XSS challenge(web)」
+* 問題に取り組むときは、できるだけ`/ctf chal`コマンドを利用してスレッドを作成してください。
+* 問題が解けたら`/ctf solve`コマンドでスレッドタイトルを完了済みにしてください。
 * 特に必要がなければ、CTF開催中はフラグ本体と完全なソルバーをシェアしないでください。(不正防止のため)
 * CTF開催中は、そのCTFのルールを遵守してください。特に、フラグやソルバー、その他ヒントになるような情報をチームのメンバー以外に共有しないでください。
 * CTF終了後はDiscord内でソルバーを共有するだけでなく、自分のブログなどでwriteupを作成していただいてもかまいません(CTFのルールは遵守してください)。他のメンバーの学習の機会にもなりますので、是非一度書いてみてください！
@@ -236,8 +236,11 @@ async def ctf_chal(interaction: discord.Interaction, category: str,name: str):
     try:
         await interaction.channel.create_thread(
             name=f"{name} [{category}]",
-            type=discord.ChannelType.public_thread,  # or private_thread
-            auto_archive_duration=60  # 分単位 (60=1h, 1440=24h など)
+            type=discord.ChannelType.public_thread,
+            auto_archive_duration=60
+        )
+        await interaction.response.send_message(
+            f"スレッドを作成しました", ephemeral=True
         )
     except Exception as e:
         await interaction.response.send_message(
