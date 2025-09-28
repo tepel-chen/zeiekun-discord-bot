@@ -228,6 +228,41 @@ async def move_category(interaction: discord.Interaction):
             ephemeral=True
         )
 
+
+@app_commands.checks.has_role(CTF_ROLE_ID)
+@ctf_commands.command(name="chal", description="CTFチャンネルでチャレンジスレッドを作製する")
+@app_commands.describe(category="チャレンジのカテゴリ", name="チャレンジ名")
+async def ctf_chal(interaction: discord.Interaction, category: str,name: str):
+    try:
+        await interaction.channel.create_thread(
+            name=f"{name} [{category}]",
+            type=discord.ChannelType.public_thread,  # or private_thread
+            auto_archive_duration=60  # 分単位 (60=1h, 1440=24h など)
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ スレッド作成に失敗しました: {e}", ephemeral=True
+        )
+        
+@app_commands.checks.has_role(CTF_ROLE_ID)
+@ctf_commands.command(name="solve", description="CTFチャンネルのチャレンジスレッドを完了状態にする")
+async def ctf_solve(interaction: discord.Interaction):
+    channel = interaction.channel
+    if not isinstance(channel, discord.Thread):
+        await interaction.response.send_message("❌ このコマンドはスレッド内でのみ使用できます。", ephemeral=True)
+        return
+
+    if channel.owner_id != bot.user.id:
+        await interaction.response.send_message("❌ このスレッドは bot が作成したものではありません。", ephemeral=True)
+        return
+
+    if not channel.name.startswith("✅"):
+        await channel.edit(name=f"✅ {channel.name}")
+        await interaction.response.send_message("✅ スレッドを解決済みにしました！", ephemeral=False)
+    else:
+        await interaction.response.send_message("⚠️ すでに解決済みです。", ephemeral=True)
+
+
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (id={bot.user.id})")
