@@ -1,6 +1,6 @@
 import os
-import asyncio
 import logging
+import sqlite3
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -29,6 +29,45 @@ RULE_TEMPLATE = """
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ctfbot")
+
+DB_PATH = "ctf_channels.db"
+
+def init_database():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ctf_channels (
+            channel_id INTEGER PRIMARY KEY,
+            guild_id INTEGER NOT NULL,
+            channel_name TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def add_channel_record(channel_id: int, guild_id: int, channel_name: str):
+    """Add a new channel to the database"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO ctf_channels (channel_id, guild_id, channel_name)
+        VALUES (?, ?, ?)
+    """, (channel_id, guild_id, channel_name))
+    conn.commit()
+    conn.close()
+
+def is_bot_created_channel(channel_id: int) -> bool:
+    """Check if channel was created by the bot"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT channel_id FROM ctf_channels WHERE channel_id = ?
+    """, (channel_id,))
+    result = cursor.fetchone()
+    conn.close()
+    
+    return result is not None
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -81,6 +120,8 @@ async def ctf_create(interaction: discord.Interaction, name: str):
         final_name = f"ctf-{name}-{i}"
 
     channel = await create_private_channel(guild, final_name, category)
+    
+    add_channel_record(channel.id, guild.id, final_name)
 
     join_custom_id = f"ctf_join:{channel.id}"
     view = discord.ui.View(timeout=None)
@@ -214,25 +255,38 @@ async def move_category(interaction: discord.Interaction):
     guild = interaction.guild
     assert guild is not None, "This command must be used in a guild"
     channel = interaction.channel
-
-    if isinstance(channel, discord.TextChannel) and channel.name.startswith("ctf-"):
+    if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
+        await interaction.response.send_message(
+            "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
+            ephemeral=True
+        )
+        return
+    
+    try:
         category = await ensure_category(guild, ARCHIVE_CATEGORY)
 
         await channel.edit(category=category)
         await interaction.response.send_message(
             f"✅ チャンネル {channel.mention} をカテゴリー「{ARCHIVE_CATEGORY}」へ移動しました。"
         )
-    else:
+    except Exception as e:
         await interaction.response.send_message(
-            "このコマンドはチャンネル名が `ctf-` から始まるチャンネルでのみ使用できます。",
-            ephemeral=True
+            f"❌ スレッド作成に失敗しました: {e}", ephemeral=True
         )
 
 
 @app_commands.checks.has_role(CTF_ROLE_ID)
 @ctf_commands.command(name="chal", description="CTFチャンネルでチャレンジスレッドを作製する")
 @app_commands.describe(category="チャレンジのカテゴリ", name="チャレンジ名")
-async def ctf_chal(interaction: discord.Interaction, category: str,name: str):
+async def ctf_chal(interaction: discord.Interaction, category: str, name: str):
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
+        await interaction.response.send_message(
+            "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
+            ephemeral=True
+        )
+        return
+    
     try:
         await interaction.channel.create_thread(
             name=f"{name} [{category}]",
@@ -269,6 +323,8 @@ async def ctf_solve(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     logger.info(f"Logged in as {bot.user} (id={bot.user.id})")
+    init_database()
+    logger.info("Database initialized")
     try:
         guild = discord.Object(id=GUILD_ID)
         await tree.sync(guild=guild)
