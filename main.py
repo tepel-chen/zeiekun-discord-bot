@@ -240,7 +240,7 @@ async def ctf_chal(interaction: discord.Interaction, category: str,name: str):
             auto_archive_duration=60
         )
         await interaction.response.send_message(
-            f"スレッドを作成しました", ephemeral=True
+            f"✅ {interaction.user.mention} さんがスレッドを作成しました", ephemeral=False
         )
     except Exception as e:
         await interaction.response.send_message(
@@ -261,7 +261,7 @@ async def ctf_solve(interaction: discord.Interaction):
 
     if not channel.name.startswith("✅"):
         await channel.edit(name=f"✅ {channel.name}")
-        await interaction.response.send_message("✅ スレッドを解決済みにしました！", ephemeral=False)
+        await interaction.response.send_message(f"✅ {interaction.user.mention} さんがスレッドを解決済みにしました！", ephemeral=False)
     else:
         await interaction.response.send_message("⚠️ すでに解決済みです。", ephemeral=True)
 
