@@ -69,6 +69,19 @@ def is_bot_created_channel(channel_id: int) -> bool:
     
     return result is not None
 
+def normalize_category(category: str) -> str:
+    """Normalize category name with custom mappings"""
+    mappings = {
+        "reversing": "Rev",
+        "miscellaneous": "Misc",
+    }
+    
+    lower_category = category.lower()
+    if lower_category in mappings:
+        return mappings[lower_category]
+    
+    return category.title()
+
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
@@ -288,8 +301,9 @@ async def ctf_chal(interaction: discord.Interaction, category: str, name: str):
         return
     
     try:
+        normalized_category = normalize_category(category)
         await interaction.channel.create_thread(
-            name=f"{name} [{category}]",
+            name=f"{name} [{normalized_category}]",
             type=discord.ChannelType.public_thread,
             auto_archive_duration=60
         )
@@ -318,6 +332,83 @@ async def ctf_solve(interaction: discord.Interaction):
         await interaction.response.send_message(f"✅ {interaction.user.mention} さんがスレッドを解決済みにしました！", ephemeral=False)
     else:
         await interaction.response.send_message("⚠️ すでに解決済みです。", ephemeral=True)
+
+
+@app_commands.checks.has_role(CTF_ROLE_ID)
+@ctf_commands.command(name="search", description="カテゴリ名でスレッドを検索する")
+@app_commands.describe(
+    category="検索するカテゴリ名（未指定の場合は全カテゴリ）",
+    solved="解決済み(True)/未解決(False)/両方(未指定)"
+)
+async def ctf_search(
+    interaction: discord.Interaction,
+    category: Optional[str] = None,
+    solved: Optional[bool] = None
+):
+    channel = interaction.channel
+    if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
+        await interaction.response.send_message(
+            "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
+            ephemeral=True
+        )
+        return
+    
+    search_category = normalize_category(category) if category else None
+    
+    matching_threads = []
+    async for thread in channel.archived_threads(limit=None):
+        if search_category:
+            if f"[{search_category}]" not in thread.name:
+                continue
+        
+        is_solved = thread.name.startswith("✅")
+        if solved is not None and is_solved != solved:
+            continue
+        
+        matching_threads.append(thread)
+    
+    for thread in channel.threads:
+        if search_category:
+            if f"[{search_category}]" not in thread.name:
+                continue
+        
+        is_solved = thread.name.startswith("✅")
+        if solved is not None and is_solved != solved:
+            continue
+        
+        matching_threads.append(thread)
+    
+    if not matching_threads:
+        filter_desc = ""
+        if search_category:
+            filter_desc += f"カテゴリ「{search_category}」"
+        if solved is not None:
+            status = "解決済み" if solved else "未解決"
+            if filter_desc:
+                filter_desc += f"({status})"
+            else:
+                filter_desc = status
+        
+        if filter_desc:
+            await interaction.response.send_message(
+                f"❌ {filter_desc}のスレッドが見つかりません。",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ スレッドが見つかりません。",
+                ephemeral=True
+            )
+        return
+    
+    response = "✅ 検索結果:\n"
+    for thread in matching_threads[:25]:
+        response += f"• {thread.mention}\n"
+    
+    if len(matching_threads) > 25:
+        response += f"\n...他 {len(matching_threads) - 25} 件"
+    
+    await interaction.response.send_message(response, ephemeral=True)
 
 
 @bot.event
