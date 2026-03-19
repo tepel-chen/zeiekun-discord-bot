@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import types
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import discord
@@ -9,11 +10,13 @@ from discord import app_commands
 from commands.context import CommandContext
 
 
+ctfconf_module = importlib.import_module("commands.ctfconf")
 create_module = importlib.import_module("commands.create")
 archive_module = importlib.import_module("commands.archive")
 chal_module = importlib.import_module("commands.chal")
 search_module = importlib.import_module("commands.search")
 solve_module = importlib.import_module("commands.solve")
+time_module = importlib.import_module("commands.time")
 
 
 class FakeTextChannel:
@@ -100,7 +103,7 @@ def test_create_command_success(monkeypatch):
 
     monkeypatch.setattr(create_module, "ensure_category", AsyncMock(return_value="category"))
     monkeypatch.setattr(create_module, "create_private_channel", AsyncMock(return_value=created_channel))
-    monkeypatch.setattr(create_module, "add_channel_record", lambda *args: None)
+    monkeypatch.setattr(create_module, "add_channel_record", lambda *args, **kwargs: None)
 
     asyncio.run(command.callback(interaction, "demo"))
 
@@ -110,6 +113,33 @@ def test_create_command_success(monkeypatch):
         ephemeral=True,
     )
     interaction_channel.send.assert_awaited_once()
+
+
+def test_create_command_stores_times(monkeypatch):
+    monkeypatch.setattr(create_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(create_module.discord, "Thread", FakeThread)
+    group = app_commands.Group(name="ctf", description="CTF")
+    create_module.register_command(group, make_context())
+    command = get_command(group, "create")
+
+    created_channel = make_text_channel(channel_id=33, name="ctf-demo", mention="#ctf-demo")
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(id=44, text_channels=[], categories=[]),
+        channel=make_text_channel(),
+        response=types.SimpleNamespace(defer=AsyncMock()),
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+    calls = []
+
+    monkeypatch.setattr(create_module, "ensure_category", AsyncMock(return_value="category"))
+    monkeypatch.setattr(create_module, "create_private_channel", AsyncMock(return_value=created_channel))
+    monkeypatch.setattr(create_module, "add_channel_record", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    asyncio.run(command.callback(interaction, "demo", "2026-03-20 10:00", "2026-03-21 12:00"))
+
+    kwargs = calls[0][1]
+    assert kwargs["start_time"] == datetime(2026, 3, 20, 10, 0)
+    assert kwargs["end_time"] == datetime(2026, 3, 21, 12, 0)
 
 
 def test_archive_command_rejects_non_bot_channel(monkeypatch):
@@ -202,6 +232,66 @@ def test_search_command_returns_matches(monkeypatch):
     message = interaction.response.send_message.await_args.args[0]
     assert "#warmup" in message
     assert "#solved-web" in message
+
+
+def test_ctfconf_command_updates_times(monkeypatch):
+    monkeypatch.setattr(ctfconf_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    ctfconf_module.register_command(group, make_context())
+    command = get_command(group, "ctfconf")
+    channel = make_text_channel()
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    updates = []
+    monkeypatch.setattr(ctfconf_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        ctfconf_module,
+        "update_channel_record",
+        lambda channel_id, **kwargs: updates.append((channel_id, kwargs)) or True,
+    )
+
+    asyncio.run(command.callback(interaction, "2026-03-20 10:00", "2026-03-21 12:00"))
+
+    assert updates[0][0] == channel.id
+    assert updates[0][1]["start_time"] == datetime(2026, 3, 20, 10, 0)
+    assert updates[0][1]["end_time"] == datetime(2026, 3, 21, 12, 0)
+    interaction.response.send_message.assert_awaited_once()
+
+
+def test_time_command_displays_schedule(monkeypatch):
+    monkeypatch.setattr(time_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    time_module.register_command(group, make_context())
+    command = get_command(group, "time")
+    channel = make_text_channel(name="ctf-demo")
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(time_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        time_module,
+        "get_channel_record",
+        lambda channel_id: types.SimpleNamespace(
+            channel_name="ctf-demo",
+            start_time=datetime(2026, 3, 20, 10, 0),
+            end_time=datetime(2026, 3, 21, 12, 0),
+        ),
+    )
+    class FakeDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 3, 20, 9, 0)
+    monkeypatch.setattr(time_module, "datetime", FakeDateTime)
+
+    asyncio.run(command.callback(interaction))
+
+    interaction.response.send_message.assert_awaited_once()
+    message = interaction.response.send_message.await_args.args[0]
+    assert "開始: <t:1773968400:F> (<t:1773968400:R>)" in message
+    assert "終了: <t:1774062000:F> (<t:1774062000:R>)" in message
 
 
 def test_solve_command_handles_unsolved_thread(monkeypatch):
