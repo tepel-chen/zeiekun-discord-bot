@@ -99,6 +99,19 @@ def add_channel_record(
         session.commit()
 
 
+def delete_channel_record(channel_id: int) -> bool:
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        record = session.execute(
+            select(CTFChannel).where(CTFChannel.channel_id == channel_id)
+        ).scalar_one_or_none()
+        if record is None:
+            return False
+        session.delete(record)
+        session.commit()
+        return True
+
+
 def is_bot_created_channel(channel_id: int) -> bool:
     session_factory = get_session_factory()
     with session_factory() as session:

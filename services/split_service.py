@@ -4,6 +4,7 @@ import discord
 
 from db import (
     add_channel_record,
+    delete_channel_record,
     get_channels_pending_split,
     get_participants,
     get_root_channel_record,
@@ -80,45 +81,70 @@ class SplitService:
         base_name = root_record.channel_name
         play4fun_name = build_split_channel_name(base_name, "play4fun")
         play2win_name = build_split_channel_name(base_name, "play2win")
-
-        await play4fun_channel.edit(name=play4fun_name)
+        original_play4fun_name = play4fun_channel.name
         play2win_record = get_team_channel_record(root_record.channel_id, "play2win")
+        created_play2win_channel = False
         if play2win_record is None:
             play2win_channel = await create_private_channel(guild, play2win_name, play4fun_channel.category)
-            add_channel_record(
-                play2win_channel.id,
-                guild.id,
-                play2win_name,
-                root_channel_id=root_record.channel_id,
-                team_type="play2win",
-                team_mode=root_record.team_mode,
-                split_completed=1,
-                start_time=root_record.start_time,
-                end_time=root_record.end_time,
-            )
+            created_play2win_channel = True
+            try:
+                add_channel_record(
+                    play2win_channel.id,
+                    guild.id,
+                    play2win_name,
+                    root_channel_id=root_record.channel_id,
+                    team_type="play2win",
+                    team_mode=root_record.team_mode,
+                    split_completed=1,
+                    start_time=root_record.start_time,
+                    end_time=root_record.end_time,
+                )
+            except Exception:
+                await play2win_channel.delete(reason="Rollback failed split setup")
+                raise
+            original_play2win_name = play2win_channel.name
+            original_play2win_category = play2win_channel.category
         else:
             play2win_channel = guild.get_channel(play2win_record.channel_id) or await guild.fetch_channel(play2win_record.channel_id)
             if not isinstance(play2win_channel, discord.TextChannel):
                 return
+            original_play2win_name = play2win_channel.name
+            original_play2win_category = play2win_channel.category
             await play2win_channel.edit(name=play2win_name, category=play4fun_channel.category)
 
-        update_channel_record(
-            root_record.channel_id,
-            channel_name=play4fun_name,
-            team_type="play4fun",
-            team_mode=root_record.team_mode,
-            split_completed=1,
-        )
-        if play2win_record is not None:
-            update_channel_record(
-                play2win_channel.id,
-                channel_name=play2win_name,
-                team_type="play2win",
+        await play4fun_channel.edit(name=play4fun_name)
+        try:
+            updated = update_channel_record(
+                root_record.channel_id,
+                channel_name=play4fun_name,
+                team_type="play4fun",
                 team_mode=root_record.team_mode,
                 split_completed=1,
-                start_time=root_record.start_time,
-                end_time=root_record.end_time,
             )
+            if not updated:
+                raise RuntimeError("Failed to update root split record")
+            if play2win_record is not None:
+                updated = update_channel_record(
+                    play2win_channel.id,
+                    channel_name=play2win_name,
+                    team_type="play2win",
+                    team_mode=root_record.team_mode,
+                    split_completed=1,
+                    start_time=root_record.start_time,
+                    end_time=root_record.end_time,
+                )
+                if not updated:
+                    raise RuntimeError("Failed to update team split record")
+        except Exception:
+            await play4fun_channel.edit(name=original_play4fun_name)
+            if created_play2win_channel:
+                try:
+                    await play2win_channel.delete(reason="Rollback failed split setup")
+                finally:
+                    delete_channel_record(play2win_channel.id)
+            else:
+                await play2win_channel.edit(name=original_play2win_name, category=original_play2win_category)
+            raise
 
         for participant in participants:
             member = guild.get_member(participant.user_id)
@@ -144,15 +170,26 @@ class SplitService:
             return
 
         merged_name = build_base_channel_name(root_record.channel_name)
+        original_root_name = root_channel.name
         await root_channel.edit(name=merged_name)
-        update_channel_record(
-            root_record.channel_id,
-            channel_name=merged_name,
-            team_type="all",
-            split_completed=0,
-        )
-
         team_channels = get_team_channels(root_record.channel_id)
+        try:
+            updated = update_channel_record(
+                root_record.channel_id,
+                channel_name=merged_name,
+                team_type="all",
+                split_completed=0,
+            )
+            if not updated:
+                raise RuntimeError("Failed to update merged root record")
+            for team_record in team_channels:
+                updated = update_channel_record(team_record.channel_id, split_completed=0)
+                if not updated:
+                    raise RuntimeError("Failed to update merged team record")
+        except Exception:
+            await root_channel.edit(name=original_root_name)
+            raise
+
         participants = get_participants(root_record.channel_id)
         for participant in participants:
             member = guild.get_member(participant.user_id)
@@ -174,8 +211,6 @@ class SplitService:
                 if member is None:
                     continue
                 await team_channel.set_permissions(member, overwrite=discord.PermissionOverwrite(view_channel=False))
-            update_channel_record(team_record.channel_id, split_completed=0)
-
         await root_channel.send("チームを合同に戻しました。全員このチャンネルを利用してください。")
 
     async def sync_participant_channels(self, guild: discord.Guild, channel_id: int, member: discord.Member, participation_type: str):

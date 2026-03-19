@@ -2,7 +2,7 @@ import asyncio
 import importlib
 import types
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import discord
 from discord import app_commands
@@ -31,6 +31,7 @@ class FakeTextChannel:
         self.send = AsyncMock()
         self.create_thread = AsyncMock()
         self.edit = AsyncMock()
+        self.delete = AsyncMock()
         self.threads = []
         self.archived_threads = lambda limit=None: _empty_async_iter()
 
@@ -197,6 +198,36 @@ def test_create_command_rejects_end_before_start(monkeypatch):
         ephemeral=True,
     )
     create_module.create_private_channel.assert_not_awaited()
+
+
+def test_create_command_rolls_back_discord_channel_when_db_write_fails(monkeypatch):
+    monkeypatch.setattr(create_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(create_module.discord, "Thread", FakeThread)
+    group = app_commands.Group(name="ctf", description="CTF")
+    context = make_context()
+    create_module.register_command(group, context)
+    command = get_command(group, "create")
+
+    created_channel = make_text_channel(channel_id=33, name="ctf-demo", mention="#ctf-demo")
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(id=44, text_channels=[], categories=[]),
+        channel=make_text_channel(),
+        response=types.SimpleNamespace(defer=AsyncMock()),
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+
+    monkeypatch.setattr(create_module, "ensure_category", AsyncMock(return_value="category"))
+    monkeypatch.setattr(create_module, "create_private_channel", AsyncMock(return_value=created_channel))
+    monkeypatch.setattr(create_module, "add_channel_record", Mock(side_effect=RuntimeError("db boom")))
+
+    try:
+        asyncio.run(command.callback(interaction, "demo"))
+    except RuntimeError as exc:
+        assert str(exc) == "db boom"
+    else:
+        raise AssertionError("RuntimeError was not raised")
+
+    created_channel.delete.assert_awaited_once_with(reason="Rollback failed channel creation")
 
 
 def test_archive_command_rejects_non_bot_channel(monkeypatch):

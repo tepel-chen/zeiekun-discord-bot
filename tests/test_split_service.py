@@ -16,6 +16,7 @@ class FakeTextChannel:
         self.edit = AsyncMock()
         self.send = AsyncMock()
         self.set_permissions = AsyncMock()
+        self.delete = AsyncMock()
 
 
 def test_should_split_channel():
@@ -153,3 +154,54 @@ def test_merge_channel_success(monkeypatch):
     assert root_channel.set_permissions.await_count == 2
     assert team_channel.set_permissions.await_count == 2
     root_channel.send.assert_awaited_once()
+
+
+def test_split_channel_rolls_back_when_root_record_update_fails(monkeypatch):
+    root_record = types.SimpleNamespace(
+        channel_id=10,
+        channel_name="ctf-demo",
+        split_completed=0,
+        team_mode="split",
+        start_time=datetime(2026, 3, 20, 18, 0),
+        end_time=datetime(2026, 3, 21, 18, 0),
+    )
+    play4fun_channel = FakeTextChannel(10, "ctf-demo")
+    play2win_channel = FakeTextChannel(20, "ctf-demo-p2w")
+    guild = types.SimpleNamespace(
+        get_channel=lambda channel_id: {10: play4fun_channel, 20: play2win_channel}.get(channel_id),
+        fetch_channel=AsyncMock(),
+        get_member=lambda user_id: None,
+        id=123,
+    )
+    service = split_module.SplitService(bot=Mock(), logger=Mock())
+    monkeypatch.setattr(split_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(split_module, "get_root_channel_record", lambda channel_id: root_record)
+    monkeypatch.setattr(split_module, "get_team_channel_record", lambda root_channel_id, team_type: None)
+    monkeypatch.setattr(
+        split_module,
+        "get_participants",
+        lambda channel_id: [
+            types.SimpleNamespace(user_id=1, participation_type="play2win"),
+            types.SimpleNamespace(user_id=2, participation_type="play2win"),
+            types.SimpleNamespace(user_id=3, participation_type="play2win"),
+            types.SimpleNamespace(user_id=4, participation_type="play4fun"),
+            types.SimpleNamespace(user_id=5, participation_type="play4fun"),
+            types.SimpleNamespace(user_id=6, participation_type="play4fun"),
+        ],
+    )
+    monkeypatch.setattr(split_module, "add_channel_record", Mock())
+    monkeypatch.setattr(split_module, "delete_channel_record", Mock())
+    monkeypatch.setattr(split_module, "create_private_channel", AsyncMock(return_value=play2win_channel))
+    monkeypatch.setattr(split_module, "update_channel_record", Mock(return_value=False))
+
+    try:
+        asyncio.run(service.split_channel(guild, 10))
+    except RuntimeError as exc:
+        assert str(exc) == "Failed to update root split record"
+    else:
+        raise AssertionError("RuntimeError was not raised")
+
+    play4fun_channel.edit.assert_any_await(name="ctf-demo-p4f")
+    play4fun_channel.edit.assert_any_await(name="ctf-demo")
+    play2win_channel.delete.assert_awaited_once_with(reason="Rollback failed split setup")
+    split_module.delete_channel_record.assert_called_once_with(20)

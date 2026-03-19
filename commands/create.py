@@ -46,14 +46,21 @@ def register_command(ctf_commands: app_commands.Group, context):
             return
 
         channel = await create_private_channel(guild, final_name, category)
-
-        add_channel_record(
-            channel.id,
-            guild.id,
-            final_name,
-            start_time=parsed_start_time,
-            end_time=parsed_end_time,
-        )
+        try:
+            add_channel_record(
+                channel.id,
+                guild.id,
+                final_name,
+                start_time=parsed_start_time,
+                end_time=parsed_end_time,
+            )
+        except Exception:
+            context.logger.exception("Failed to persist created channel. Rolling back Discord channel")
+            try:
+                await channel.delete(reason="Rollback failed channel creation")
+            except Exception:
+                context.logger.exception("Failed to rollback created Discord channel")
+            raise
 
         view = build_join_view(channel.id, channel.name)
 
