@@ -381,7 +381,7 @@ def test_sync_participant_channels_and_resolve_fallbacks(monkeypatch):
     )
 
     monkeypatch.setattr(split_module.discord, "TextChannel", FakeTextChannel)
-    monkeypatch.setattr(split_module, "get_root_channel_record", lambda channel_id: types.SimpleNamespace(channel_id=10, split_completed=1))
+    monkeypatch.setattr(split_module, "get_root_channel_record", lambda channel_id: types.SimpleNamespace(channel_id=10, split_completed=1, disclosed=0))
     monkeypatch.setattr(split_module, "get_team_channel_record", lambda root_channel_id, team_type: types.SimpleNamespace(channel_id=20))
 
     asyncio.run(service.sync_participant_channels(guild, 10, member, "play2win"))
@@ -397,3 +397,68 @@ def test_sync_participant_channels_and_resolve_fallbacks(monkeypatch):
     monkeypatch.setattr(split_module, "get_root_channel_record", lambda channel_id: types.SimpleNamespace(channel_id=10, split_completed=1))
     monkeypatch.setattr(split_module, "get_team_channel_record", lambda root_channel_id, team_type: None)
     assert service.resolve_target_channel_id(10, "play2win") == 10
+
+
+def test_sync_participant_channels_grants_both_when_disclosed(monkeypatch):
+    service = split_module.SplitService(bot=Mock(), logger=Mock())
+    member = types.SimpleNamespace(id=1)
+    play4fun_channel = FakeTextChannel(10, "ctf-demo-p4f")
+    play2win_channel = FakeTextChannel(20, "ctf-demo-p2w")
+    guild = types.SimpleNamespace(
+        get_channel=lambda channel_id: {10: play4fun_channel, 20: play2win_channel}.get(channel_id),
+        fetch_channel=AsyncMock(),
+    )
+
+    monkeypatch.setattr(split_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(split_module, "get_root_channel_record", lambda channel_id: types.SimpleNamespace(channel_id=10, split_completed=1, disclosed=1))
+    monkeypatch.setattr(split_module, "get_team_channel_record", lambda root_channel_id, team_type: types.SimpleNamespace(channel_id=20))
+
+    asyncio.run(service.sync_participant_channels(guild, 10, member, "play2win"))
+
+    play4fun_channel.set_permissions.assert_awaited_once()
+    play2win_channel.set_permissions.assert_awaited_once()
+
+
+def test_disclose_channel_success(monkeypatch):
+    service = split_module.SplitService(bot=Mock(), logger=Mock())
+    member1 = types.SimpleNamespace(id=1)
+    member2 = types.SimpleNamespace(id=2)
+    play4fun_channel = FakeTextChannel(10, "ctf-demo-p4f")
+    play2win_channel = FakeTextChannel(20, "ctf-demo-p2w")
+    guild = types.SimpleNamespace(
+        get_channel=lambda channel_id: {10: play4fun_channel, 20: play2win_channel}.get(channel_id),
+        fetch_channel=AsyncMock(),
+        get_member=lambda user_id: {1: member1, 2: member2}.get(user_id),
+    )
+    updates = []
+    monkeypatch.setattr(split_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(split_module, "get_root_channel_record", lambda channel_id: types.SimpleNamespace(channel_id=10, split_completed=1))
+    monkeypatch.setattr(split_module, "get_team_channel_record", lambda root_channel_id, team_type: types.SimpleNamespace(channel_id=20))
+    monkeypatch.setattr(
+        split_module,
+        "get_participants",
+        lambda channel_id: [
+            types.SimpleNamespace(user_id=1, participation_type="play2win"),
+            types.SimpleNamespace(user_id=2, participation_type="play4fun"),
+        ],
+    )
+    monkeypatch.setattr(split_module, "update_channel_record", lambda channel_id, **kwargs: updates.append((channel_id, kwargs)) or True)
+
+    assert asyncio.run(service.disclose_channel(guild, 10)) is True
+    assert play4fun_channel.set_permissions.await_count == 2
+    assert play2win_channel.set_permissions.await_count == 2
+    assert updates == [(10, {"disclosed": 1}), (20, {"disclosed": 1})]
+
+
+def test_disclose_channel_marks_non_split_root(monkeypatch):
+    service = split_module.SplitService(bot=Mock(), logger=Mock())
+    updates = []
+    monkeypatch.setattr(
+        split_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=10, split_completed=0),
+    )
+    monkeypatch.setattr(split_module, "update_channel_record", lambda channel_id, **kwargs: updates.append((channel_id, kwargs)) or True)
+
+    assert asyncio.run(service.disclose_channel(types.SimpleNamespace(), 10)) is True
+    assert updates == [(10, {"disclosed": 1})]

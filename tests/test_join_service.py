@@ -192,6 +192,25 @@ def test_handle_join_new_rejects_missing_role():
         raise AssertionError("UserFacingError was not raised")
 
 
+def test_handle_join_grants_both_channels_when_disclosed():
+    join_module.discord.TextChannel = FakeTextChannel
+    split_service = types.SimpleNamespace(
+        resolve_target_channel_id=lambda channel_id, participation_type: channel_id,
+        sync_participant_channels=AsyncMock(),
+    )
+    service = join_module.JoinService(logger=types.SimpleNamespace(exception=lambda *args, **kwargs: None), ctf_role_id=99, split_service=split_service)
+    response = types.SimpleNamespace(send_message=AsyncMock())
+    channel = FakeTextChannel()
+    guild = types.SimpleNamespace(get_channel=lambda channel_id: channel, fetch_channel=AsyncMock())
+    user = types.SimpleNamespace(id=42, roles=[types.SimpleNamespace(id=99)], mention="@user")
+    interaction = types.SimpleNamespace(guild=guild, user=user, response=response, message=None)
+
+    join_module.upsert_participant_record = Mock()
+    asyncio.run(service.handle_join(interaction, "ctf_join:123:play2win"))
+
+    split_service.sync_participant_channels.assert_awaited_once_with(guild, 123, user, "play2win")
+
+
 def test_update_join_message_returns_without_message():
     join_module.discord.TextChannel = FakeTextChannel
     service = create_join_service()

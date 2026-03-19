@@ -33,6 +33,7 @@ def test_database_helpers(tmp_path):
     assert record.root_channel_id == 1001
     assert record.team_mode == "auto"
     assert record.archived == 0
+    assert record.disclosed == 0
 
     assert db.update_channel_record(1001, start_time=datetime(2026, 3, 20, 11, 0)) is True
     updated = db.get_channel_record(1001)
@@ -41,6 +42,9 @@ def test_database_helpers(tmp_path):
     assert db.update_channel_record(1001, archived=1) is True
     updated = db.get_channel_record(1001)
     assert updated.archived == 1
+    assert db.update_channel_record(1001, disclosed=1) is True
+    updated = db.get_channel_record(1001)
+    assert updated.disclosed == 1
     assert db.get_channels_pending_split(datetime(2026, 3, 20, 9, 0)) == []
 
     db.upsert_participant_record(1001, 10, "play2win")

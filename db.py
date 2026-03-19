@@ -25,6 +25,7 @@ class CTFChannel(Base):
     team_mode = Column(Text, nullable=False, server_default=text("'auto'"))
     split_completed = Column(Integer, nullable=False, server_default=text("0"))
     archived = Column(Integer, nullable=False, server_default=text("0"))
+    disclosed = Column(Integer, nullable=False, server_default=text("0"))
     start_time = Column(TIMESTAMP, nullable=True)
     end_time = Column(TIMESTAMP, nullable=True)
     created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
@@ -80,6 +81,7 @@ def add_channel_record(
     team_mode: str = "auto",
     split_completed: int = 0,
     archived: int = 0,
+    disclosed: int = 0,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
 ):
@@ -95,6 +97,7 @@ def add_channel_record(
                 team_mode=team_mode,
                 split_completed=split_completed,
                 archived=archived,
+                disclosed=disclosed,
                 start_time=start_time,
                 end_time=end_time,
             )
@@ -198,6 +201,7 @@ def update_channel_record(
     team_mode: str | object = UPDATE_UNSET,
     split_completed: int | object = UPDATE_UNSET,
     archived: int | object = UPDATE_UNSET,
+    disclosed: int | object = UPDATE_UNSET,
     start_time: datetime | None | object = UPDATE_UNSET,
     end_time: datetime | None | object = UPDATE_UNSET,
 ) -> bool:
@@ -219,6 +223,8 @@ def update_channel_record(
             record.split_completed = split_completed
         if archived is not UPDATE_UNSET:
             record.archived = archived
+        if disclosed is not UPDATE_UNSET:
+            record.disclosed = disclosed
         if start_time is not UPDATE_UNSET:
             record.start_time = start_time
         if end_time is not UPDATE_UNSET:

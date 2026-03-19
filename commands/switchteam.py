@@ -30,6 +30,9 @@ def register_command(ctf_commands: app_commands.Group, context):
         participant = get_participant(channel.id, interaction.user.id)
         if participant is None:
             raise UserFacingError("❌ まだこのCTFに参加していません。参加ボタンから参加してください。")
+        root_record = get_root_channel_record(channel.id)
+        if root_record is not None and getattr(root_record, "disclosed", 0):
+            raise UserFacingError("❌ disclose 後は switchteam できません。")
 
         upsert_participant_record(channel.id, interaction.user.id, team.value)
         split_service = SplitService(context.bot, context.logger)
@@ -40,7 +43,6 @@ def register_command(ctf_commands: app_commands.Group, context):
             ephemeral=True,
         )
         notice = f"{interaction.user.mention} が参加種別を `{team.value}` に切り替えました。"
-        root_record = get_root_channel_record(channel.id)
         if root_record is not None and root_record.split_completed:
             target_channels = []
             root_channel = interaction.guild.get_channel(root_record.channel_id)

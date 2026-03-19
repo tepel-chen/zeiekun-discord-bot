@@ -226,7 +226,57 @@ class SplitService:
         if not isinstance(play4fun_channel, discord.TextChannel) or not isinstance(play2win_channel, discord.TextChannel):
             return
 
+        if getattr(root_record, "disclosed", 0):
+            await self.grant_both_team_channels(play4fun_channel, play2win_channel, member)
+            return
+
         await self.sync_member_channels(play4fun_channel, play2win_channel, member, participation_type)
+
+    async def disclose_channel(self, guild: discord.Guild, root_channel_id: int):
+        root_record = get_root_channel_record(root_channel_id)
+        if root_record is None:
+            return False
+        if not root_record.split_completed:
+            update_channel_record(root_record.channel_id, disclosed=1)
+            return True
+
+        play4fun_channel = guild.get_channel(root_record.channel_id) or await guild.fetch_channel(root_record.channel_id)
+        play2win_record = get_team_channel_record(root_record.channel_id, "play2win")
+        if play2win_record is None:
+            return False
+        play2win_channel = guild.get_channel(play2win_record.channel_id) or await guild.fetch_channel(play2win_record.channel_id)
+        if not isinstance(play4fun_channel, discord.TextChannel) or not isinstance(play2win_channel, discord.TextChannel):
+            return False
+
+        participants = get_participants(root_record.channel_id)
+        for participant in participants:
+            member = guild.get_member(participant.user_id)
+            if member is None:
+                continue
+            await self.grant_both_team_channels(play4fun_channel, play2win_channel, member)
+
+        update_channel_record(root_record.channel_id, disclosed=1)
+        update_channel_record(play2win_channel.id, disclosed=1)
+        return True
+
+    async def grant_both_team_channels(
+        self,
+        play4fun_channel: discord.TextChannel,
+        play2win_channel: discord.TextChannel,
+        member: discord.Member,
+    ):
+        await play4fun_channel.set_permissions(
+            member,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+        )
+        await play2win_channel.set_permissions(
+            member,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+        )
 
     async def sync_member_channels(
         self,

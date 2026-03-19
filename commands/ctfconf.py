@@ -49,6 +49,8 @@ def register_command(ctf_commands: app_commands.Group, context):
 
         root_record = get_root_channel_record(channel.id)
         target_channel_id = root_record.channel_id if root_record is not None else channel.id
+        if teammode is not None and root_record is not None and getattr(root_record, "disclosed", 0):
+            raise UserFacingError("❌ disclose 後は teammode を変更できません。")
         effective_start_time = parsed_start_time if start_time is not None else (root_record.start_time if root_record is not None else None)
         effective_end_time = parsed_end_time if end_time is not None else (root_record.end_time if root_record is not None else None)
         try:

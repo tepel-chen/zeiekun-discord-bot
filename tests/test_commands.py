@@ -15,6 +15,7 @@ ctfconf_module = importlib.import_module("commands.ctfconf")
 create_module = importlib.import_module("commands.create")
 archive_module = importlib.import_module("commands.archive")
 chal_module = importlib.import_module("commands.chal")
+disclose_module = importlib.import_module("commands.disclose")
 players_module = importlib.import_module("commands.players")
 search_module = importlib.import_module("commands.search")
 solve_module = importlib.import_module("commands.solve")
@@ -414,6 +415,107 @@ def test_ctfconf_command_rejects_end_before_existing_start(monkeypatch):
         raise AssertionError("UserFacingError was not raised")
 
 
+def test_ctfconf_command_rejects_teammode_change_after_disclose(monkeypatch):
+    monkeypatch.setattr(ctfconf_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    ctfconf_module.register_command(group, make_context())
+    command = get_command(group, "ctfconf")
+    channel = make_text_channel()
+    interaction = types.SimpleNamespace(channel=channel, response=types.SimpleNamespace(send_message=AsyncMock()))
+    monkeypatch.setattr(ctfconf_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        ctfconf_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=channel_id, disclosed=1, start_time=None, end_time=None),
+    )
+
+    try:
+        asyncio.run(command.callback(interaction, None, None, app_commands.Choice(name="join", value="join")))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ disclose 後は teammode を変更できません。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
+
+
+def test_disclose_command_success(monkeypatch):
+    monkeypatch.setattr(disclose_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    disclose_module.register_command(group, make_context())
+    command = get_command(group, "disclose")
+    channel = make_text_channel(channel_id=45)
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        guild=types.SimpleNamespace(),
+        user=types.SimpleNamespace(mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    disclose = AsyncMock(return_value=True)
+    monkeypatch.setattr(disclose_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        disclose_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=45, split_completed=1, end_time=datetime(2026, 3, 21, 12, 0), disclosed=0),
+    )
+    monkeypatch.setattr(disclose_module, "tokyo_now", lambda: datetime(2026, 3, 21, 12, 0))
+    monkeypatch.setattr(disclose_module, "SplitService", lambda bot, logger: types.SimpleNamespace(disclose_channel=disclose))
+
+    asyncio.run(command.callback(interaction))
+
+    disclose.assert_awaited_once_with(interaction.guild, 45)
+    interaction.response.send_message.assert_awaited_once_with("✅ disclose しました。", ephemeral=True)
+    channel.send.assert_awaited_once_with("@user が disclose しました。")
+
+
+def test_disclose_command_allows_non_split_ctf(monkeypatch):
+    monkeypatch.setattr(disclose_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    disclose_module.register_command(group, make_context())
+    command = get_command(group, "disclose")
+    channel = make_text_channel(channel_id=45)
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        guild=types.SimpleNamespace(),
+        user=types.SimpleNamespace(mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    disclose = AsyncMock(return_value=True)
+    monkeypatch.setattr(disclose_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        disclose_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=45, split_completed=0, end_time=datetime(2026, 3, 21, 12, 0), disclosed=0),
+    )
+    monkeypatch.setattr(disclose_module, "tokyo_now", lambda: datetime(2026, 3, 21, 12, 0))
+    monkeypatch.setattr(disclose_module, "SplitService", lambda bot, logger: types.SimpleNamespace(disclose_channel=disclose))
+
+    asyncio.run(command.callback(interaction))
+
+    disclose.assert_awaited_once_with(interaction.guild, 45)
+    interaction.response.send_message.assert_awaited_once_with("✅ disclose しました。", ephemeral=True)
+
+
+def test_disclose_command_rejects_before_end(monkeypatch):
+    monkeypatch.setattr(disclose_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    disclose_module.register_command(group, make_context())
+    command = get_command(group, "disclose")
+    interaction = types.SimpleNamespace(channel=make_text_channel(channel_id=45), response=types.SimpleNamespace(send_message=AsyncMock()))
+    monkeypatch.setattr(disclose_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        disclose_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=45, split_completed=1, end_time=datetime(2026, 3, 21, 12, 0), disclosed=0),
+    )
+    monkeypatch.setattr(disclose_module, "tokyo_now", lambda: datetime(2026, 3, 21, 11, 59))
+
+    try:
+        asyncio.run(command.callback(interaction))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ このコマンドは終了時刻以降にのみ実行できます。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
+
+
 def test_time_command_displays_schedule(monkeypatch):
     monkeypatch.setattr(time_module.discord, "TextChannel", FakeTextChannel)
     group = app_commands.Group(name="ctf", description="CTF")
@@ -565,6 +667,36 @@ def test_switchteam_command_rejects_non_participants(monkeypatch):
         asyncio.run(command.callback(interaction, choice))
     except UserFacingError as exc:
         assert str(exc) == "❌ まだこのCTFに参加していません。参加ボタンから参加してください。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
+
+
+def test_switchteam_command_rejects_after_disclose(monkeypatch):
+    monkeypatch.setattr(switchteam_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    switchteam_module.register_command(group, make_context())
+    command = get_command(group, "switchteam")
+    interaction = types.SimpleNamespace(
+        channel=make_text_channel(channel_id=45),
+        user=types.SimpleNamespace(id=10),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        switchteam_module,
+        "get_participant",
+        lambda channel_id, user_id: types.SimpleNamespace(user_id=user_id, participation_type="play4fun"),
+    )
+    monkeypatch.setattr(
+        switchteam_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=45, disclosed=1),
+    )
+
+    try:
+        asyncio.run(command.callback(interaction, app_commands.Choice(name="play2win", value="play2win")))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ disclose 後は switchteam できません。"
     else:
         raise AssertionError("UserFacingError was not raised")
 
