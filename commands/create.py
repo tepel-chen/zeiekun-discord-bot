@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 
-from db import add_channel_record
+from db import add_channel_record, is_bot_created_channel
 from services.channel_service import (
     allocate_channel_name,
     build_join_announcement,
@@ -28,6 +28,13 @@ def register_command(ctf_commands: app_commands.Group, context):
     ):
         guild = interaction.guild
         assert guild is not None, "This command must be used in a guild"
+        current_channel = interaction.channel
+        if isinstance(current_channel, discord.TextChannel) and is_bot_created_channel(current_channel.id):
+            await interaction.response.send_message(
+                "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。",
+                ephemeral=True,
+            )
+            return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         category = await ensure_category(guild, context.category_name)

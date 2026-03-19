@@ -115,6 +115,30 @@ def test_create_command_success(monkeypatch):
     interaction_channel.send.assert_awaited_once()
 
 
+def test_create_command_rejects_bot_created_channel(monkeypatch):
+    monkeypatch.setattr(create_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(create_module.discord, "Thread", FakeThread)
+    group = app_commands.Group(name="ctf", description="CTF")
+    create_module.register_command(group, make_context())
+    command = get_command(group, "create")
+    response = types.SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock())
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(id=44, text_channels=[], categories=[]),
+        channel=make_text_channel(channel_id=77),
+        response=response,
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+    monkeypatch.setattr(create_module, "is_bot_created_channel", lambda channel_id: True)
+
+    asyncio.run(command.callback(interaction, "demo"))
+
+    response.send_message.assert_awaited_once_with(
+        "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。",
+        ephemeral=True,
+    )
+    response.defer.assert_not_awaited()
+
+
 def test_create_command_stores_times(monkeypatch):
     monkeypatch.setattr(create_module.discord, "TextChannel", FakeTextChannel)
     monkeypatch.setattr(create_module.discord, "Thread", FakeThread)
