@@ -3,7 +3,7 @@ import importlib
 import sys
 import types
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,27 +37,27 @@ def test_route_interaction_dispatches_join_handlers():
 
     interaction = types.SimpleNamespace(
         type=join_module.discord.InteractionType.component,
-        data={"custom_id": "ctf_join:123"},
+        data={"custom_id": "ctf_join:123:play2win"},
     )
     asyncio.run(service.route_interaction(interaction))
 
-    service.handle_join.assert_awaited_once_with(interaction, "ctf_join:123", False)
+    service.handle_join.assert_awaited_once_with(interaction, "ctf_join:123:play2win", False)
     service.handle_join_new.assert_not_awaited()
 
     interaction = types.SimpleNamespace(
         type=join_module.discord.InteractionType.component,
-        data={"custom_id": "ctf_join_new:456"},
+        data={"custom_id": "ctf_join_new:456:play4fun"},
     )
     asyncio.run(service.route_interaction(interaction))
 
-    service.handle_join_new.assert_awaited_once_with(interaction, "ctf_join_new:456")
+    service.handle_join_new.assert_awaited_once_with(interaction, "ctf_join_new:456:play4fun")
 
 
 def test_route_interaction_ignores_non_component_interactions():
     service = create_join_service()
     service.handle_join = AsyncMock()
 
-    interaction = types.SimpleNamespace(type=None, data={"custom_id": "ctf_join:123"})
+    interaction = types.SimpleNamespace(type=None, data={"custom_id": "ctf_join:123:play2win"})
     asyncio.run(service.route_interaction(interaction))
 
     service.handle_join.assert_not_awaited()
@@ -68,7 +68,7 @@ def test_handle_join_rejects_invalid_channel_id():
     response = types.SimpleNamespace(send_message=AsyncMock())
     interaction = types.SimpleNamespace(response=response)
 
-    asyncio.run(service.handle_join(interaction, "ctf_join:abc"))
+    asyncio.run(service.handle_join(interaction, "ctf_join:abc:play2win"))
 
     response.send_message.assert_awaited_once_with("Button is misconfigured.", ephemeral=True)
 
@@ -89,7 +89,7 @@ def test_handle_join_shows_rule_gate_when_role_missing():
         response=response,
     )
 
-    asyncio.run(service.handle_join(interaction, "ctf_join:123"))
+    asyncio.run(service.handle_join(interaction, "ctf_join:123:play2win"))
 
     response.send_message.assert_awaited_once()
     args = response.send_message.await_args
@@ -111,7 +111,7 @@ def test_handle_join_succeeds_and_updates_message():
         get_channel=lambda channel_id: channel,
         fetch_channel=AsyncMock(),
     )
-    user = types.SimpleNamespace(roles=[types.SimpleNamespace(id=99)], mention="@user")
+    user = types.SimpleNamespace(id=42, roles=[types.SimpleNamespace(id=99)], mention="@user")
     interaction = types.SimpleNamespace(
         guild=guild,
         user=user,
@@ -119,7 +119,8 @@ def test_handle_join_succeeds_and_updates_message():
         message=message,
     )
 
-    asyncio.run(service.handle_join(interaction, "ctf_join:123"))
+    join_module.upsert_participant_record = Mock()
+    asyncio.run(service.handle_join(interaction, "ctf_join:123:play2win"))
 
     channel.set_permissions.assert_awaited_once_with(
         user,
@@ -127,7 +128,8 @@ def test_handle_join_succeeds_and_updates_message():
         send_messages=True,
         read_message_history=True,
     )
-    channel.send.assert_awaited_once_with("@userが参加しました")
+    join_module.upsert_participant_record.assert_called_once_with(123, user.id, "play2win")
+    channel.send.assert_awaited_once_with("@userが `play2win` として参加しました")
     message.edit.assert_awaited_once()
 
 
@@ -140,14 +142,19 @@ def test_handle_join_reports_already_joined():
     guild = types.SimpleNamespace(get_channel=lambda channel_id: channel, fetch_channel=AsyncMock())
     interaction = types.SimpleNamespace(
         guild=guild,
-        user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=99)]),
+        user=types.SimpleNamespace(id=55, roles=[types.SimpleNamespace(id=99)]),
         response=response,
         message=None,
     )
 
-    asyncio.run(service.handle_join(interaction, "ctf_join:123"))
+    join_module.upsert_participant_record = Mock()
+    asyncio.run(service.handle_join(interaction, "ctf_join:123:play4fun"))
 
-    response.send_message.assert_awaited_once_with("#ctf-test に既に参加しています", ephemeral=True)
+    join_module.upsert_participant_record.assert_called_once_with(123, 55, "play4fun")
+    response.send_message.assert_awaited_once_with(
+        "#ctf-test に既に参加しています。参加種別を `play4fun` に更新しました",
+        ephemeral=True,
+    )
 
 
 def test_handle_join_new_adds_role_and_retries_join():
@@ -159,10 +166,10 @@ def test_handle_join_new_adds_role_and_retries_join():
     guild = types.SimpleNamespace(get_role=lambda role_id: role)
     interaction = types.SimpleNamespace(guild=guild, user=user, response=response)
 
-    asyncio.run(service.handle_join_new(interaction, "ctf_join_new:123"))
+    asyncio.run(service.handle_join_new(interaction, "ctf_join_new:123:play2win"))
 
     user.add_roles.assert_awaited_once_with(role, reason="CTF join gate passed")
-    service.handle_join.assert_awaited_once_with(interaction, "ctf_join_new:123", True)
+    service.handle_join.assert_awaited_once_with(interaction, "ctf_join_new:123:play2win", True)
 
 
 def test_update_join_message_returns_without_message():

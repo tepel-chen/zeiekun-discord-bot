@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 
 from db import add_channel_record, is_bot_created_channel
+from services.join_service import build_join_view
 from services.channel_service import (
     allocate_channel_name,
     build_join_announcement,
@@ -56,15 +57,7 @@ def register_command(ctf_commands: app_commands.Group, context):
             end_time=parsed_end_time,
         )
 
-        join_custom_id = f"ctf_join:{channel.id}"
-        view = discord.ui.View(timeout=None)
-        view.add_item(
-            discord.ui.Button(
-                label=f"{channel.name} に参加する",
-                style=discord.ButtonStyle.primary,
-                custom_id=join_custom_id,
-            )
-        )
+        view = build_join_view(channel.id, channel.name)
 
         await interaction.followup.send(
             content=f"{channel.mention} ({channel.name})が作成されました",

@@ -1,5 +1,6 @@
 import discord
 
+from db import upsert_participant_record
 from services.channel_service import build_join_announcement, get_participant_count
 
 
@@ -14,11 +15,30 @@ RULE_TEMPLATE = """
 もしよろしければ下のボタンを押してご参加ください！可能でしたら #ctf-other にて簡単に自己紹介していただけると嬉しいです！
 """.strip()
 
+PARTICIPATION_LABELS = {
+    "play2win": "play2win",
+    "play4fun": "play4fun",
+}
+
+
+def build_join_view(channel_id: int, channel_name: str) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for participation_type in ("play2win", "play4fun"):
+        view.add_item(
+            discord.ui.Button(
+                label=f"{PARTICIPATION_LABELS[participation_type]} で {channel_name} に参加する",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"ctf_join:{channel_id}:{participation_type}",
+            )
+        )
+    return view
+
 
 class JoinService:
-    def __init__(self, logger, ctf_role_id: int):
+    def __init__(self, logger, ctf_role_id: int, split_service=None):
         self.logger = logger
         self.ctf_role_id = ctf_role_id
+        self.split_service = split_service
 
     async def route_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component:
@@ -35,10 +55,17 @@ class JoinService:
             await self.handle_join_new(interaction, custom_id)
 
     async def handle_join(self, interaction: discord.Interaction, custom_id: str, skip_check: bool = False):
-        _, _, channel_id_text = custom_id.partition(":")
+        parts = custom_id.split(":")
+        if len(parts) != 3:
+            await interaction.response.send_message("Button is misconfigured.", ephemeral=True)
+            return
+        _, channel_id_text, participation_type = parts
         try:
             channel_id = int(channel_id_text)
         except ValueError:
+            await interaction.response.send_message("Button is misconfigured.", ephemeral=True)
+            return
+        if participation_type not in PARTICIPATION_LABELS:
             await interaction.response.send_message("Button is misconfigured.", ephemeral=True)
             return
 
@@ -47,7 +74,12 @@ class JoinService:
             await interaction.response.send_message("This only works inside a server.", ephemeral=True)
             return
 
-        channel = guild.get_channel(channel_id) or await guild.fetch_channel(channel_id)
+        target_channel_id = (
+            self.split_service.resolve_target_channel_id(channel_id, participation_type)
+            if self.split_service is not None
+            else channel_id
+        )
+        channel = guild.get_channel(target_channel_id) or await guild.fetch_channel(target_channel_id)
         if not isinstance(channel, discord.TextChannel):
             await interaction.response.send_message("Target channel not found.", ephemeral=True)
             return
@@ -57,14 +89,20 @@ class JoinService:
             await interaction.response.send_message(
                 RULE_TEMPLATE,
                 ephemeral=True,
-                view=self.build_join_gate_view(channel.id, channel.name),
+                view=self.build_join_gate_view(channel.id, channel.name, participation_type),
             )
             return
 
         try:
             current = channel.overwrites_for(user)
             if current.view_channel:
-                await interaction.response.send_message(f"{channel.mention} に既に参加しています", ephemeral=True)
+                upsert_participant_record(channel.id, user.id, participation_type)
+                if self.split_service is not None:
+                    await self.split_service.sync_participant_channels(guild, channel_id, user, participation_type)
+                await interaction.response.send_message(
+                    f"{channel.mention} に既に参加しています。参加種別を `{PARTICIPATION_LABELS[participation_type]}` に更新しました",
+                    ephemeral=True,
+                )
                 return
 
             await channel.set_permissions(
@@ -73,8 +111,14 @@ class JoinService:
                 send_messages=True,
                 read_message_history=True,
             )
-            await interaction.response.send_message(f"{channel.mention}に参加しました", ephemeral=True)
-            await channel.send(f"{user.mention}が参加しました")
+            upsert_participant_record(channel.id, user.id, participation_type)
+            if self.split_service is not None:
+                await self.split_service.sync_participant_channels(guild, channel_id, user, participation_type)
+            await interaction.response.send_message(
+                f"{channel.mention}に `{PARTICIPATION_LABELS[participation_type]}` として参加しました",
+                ephemeral=True,
+            )
+            await channel.send(f"{user.mention}が `{PARTICIPATION_LABELS[participation_type]}` として参加しました")
             await self.update_join_message(interaction, channel)
         except discord.Forbidden:
             await interaction.response.send_message(
@@ -103,13 +147,13 @@ class JoinService:
 
         await self.handle_join(interaction, custom_id, True)
 
-    def build_join_gate_view(self, channel_id: int, channel_name: str) -> discord.ui.View:
+    def build_join_gate_view(self, channel_id: int, channel_name: str, participation_type: str) -> discord.ui.View:
         view = discord.ui.View(timeout=None)
         view.add_item(
             discord.ui.Button(
-                label=f"ルールを読みました！ {channel_name} に参加する",
+                label=f"ルールを読みました！ {PARTICIPATION_LABELS[participation_type]} で {channel_name} に参加する",
                 style=discord.ButtonStyle.primary,
-                custom_id=f"ctf_join_new:{channel_id}",
+                custom_id=f"ctf_join_new:{channel_id}:{participation_type}",
             )
         )
         return view

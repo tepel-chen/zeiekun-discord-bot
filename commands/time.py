@@ -3,7 +3,7 @@ from datetime import datetime
 import discord
 from discord import app_commands
 
-from db import get_channel_record, is_bot_created_channel
+from db import get_root_channel_record, is_bot_created_channel
 from services.time_service import build_time_response
 
 
@@ -19,7 +19,7 @@ def register_command(ctf_commands: app_commands.Group, context):
             )
             return
 
-        record = get_channel_record(channel.id)
+        record = get_root_channel_record(channel.id)
         if record is None:
             await interaction.response.send_message(
                 "❌ CTF設定が見つかりません。",

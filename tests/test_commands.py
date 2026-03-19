@@ -14,8 +14,10 @@ ctfconf_module = importlib.import_module("commands.ctfconf")
 create_module = importlib.import_module("commands.create")
 archive_module = importlib.import_module("commands.archive")
 chal_module = importlib.import_module("commands.chal")
+players_module = importlib.import_module("commands.players")
 search_module = importlib.import_module("commands.search")
 solve_module = importlib.import_module("commands.solve")
+switchteam_module = importlib.import_module("commands.switchteam")
 time_module = importlib.import_module("commands.time")
 
 
@@ -113,6 +115,9 @@ def test_create_command_success(monkeypatch):
         ephemeral=True,
     )
     interaction_channel.send.assert_awaited_once()
+    view = interaction_channel.send.await_args.kwargs["view"]
+    custom_ids = [item.custom_id for item in view.children]
+    assert custom_ids == ["ctf_join:33:play2win", "ctf_join:33:play4fun"]
 
 
 def test_create_command_rejects_bot_created_channel(monkeypatch):
@@ -272,15 +277,27 @@ def test_ctfconf_command_updates_times(monkeypatch):
     monkeypatch.setattr(ctfconf_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         ctfconf_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=channel_id),
+    )
+    monkeypatch.setattr(
+        ctfconf_module,
         "update_channel_record",
         lambda channel_id, **kwargs: updates.append((channel_id, kwargs)) or True,
     )
+    reconcile = AsyncMock()
+    split_service = types.SimpleNamespace(reconcile_channel_state=reconcile)
+    monkeypatch.setattr(ctfconf_module, "SplitService", lambda bot, logger: split_service)
 
-    asyncio.run(command.callback(interaction, "2026-03-20 10:00", "2026-03-21 12:00"))
+    teammode = app_commands.Choice(name="split", value="split")
+    interaction.guild = types.SimpleNamespace()
+    asyncio.run(command.callback(interaction, "2026-03-20 10:00", "2026-03-21 12:00", teammode))
 
     assert updates[0][0] == channel.id
     assert updates[0][1]["start_time"] == datetime(2026, 3, 20, 10, 0)
     assert updates[0][1]["end_time"] == datetime(2026, 3, 21, 12, 0)
+    assert updates[0][1]["team_mode"] == "split"
+    reconcile.assert_awaited_once_with(interaction.guild, channel.id)
     interaction.response.send_message.assert_awaited_once()
 
 
@@ -297,7 +314,7 @@ def test_time_command_displays_schedule(monkeypatch):
     monkeypatch.setattr(time_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         time_module,
-        "get_channel_record",
+        "get_root_channel_record",
         lambda channel_id: types.SimpleNamespace(
             channel_name="ctf-demo",
             start_time=datetime(2026, 3, 20, 10, 0),
@@ -316,6 +333,131 @@ def test_time_command_displays_schedule(monkeypatch):
     message = interaction.response.send_message.await_args.args[0]
     assert "開始: <t:1773968400:F> (<t:1773968400:R>)" in message
     assert "終了: <t:1774062000:F> (<t:1774062000:R>)" in message
+
+
+def test_players_command_displays_grouped_participants(monkeypatch):
+    monkeypatch.setattr(players_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    players_module.register_command(group, make_context())
+    command = get_command(group, "players")
+    channel = make_text_channel(channel_id=45)
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(players_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        players_module,
+        "get_participants",
+        lambda channel_id: [
+            types.SimpleNamespace(user_id=10, participation_type="play2win"),
+            types.SimpleNamespace(user_id=20, participation_type="play4fun"),
+        ],
+    )
+
+    asyncio.run(command.callback(interaction))
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "✅ 参加者一覧 (合計: 2人)\nplay2win: 1人\n<@10>\nplay4fun: 1人\n<@20>",
+        ephemeral=True,
+    )
+
+
+def test_switchteam_command_updates_participation_type(monkeypatch):
+    monkeypatch.setattr(switchteam_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    switchteam_module.register_command(group, make_context())
+    command = get_command(group, "switchteam")
+    channel = make_text_channel(channel_id=45)
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        user=types.SimpleNamespace(id=10, mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    calls = []
+    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        switchteam_module,
+        "get_participant",
+        lambda channel_id, user_id: types.SimpleNamespace(user_id=user_id, participation_type="play4fun"),
+    )
+    monkeypatch.setattr(
+        switchteam_module,
+        "upsert_participant_record",
+        lambda channel_id, user_id, participation_type: calls.append((channel_id, user_id, participation_type)),
+    )
+    monkeypatch.setattr(switchteam_module, "get_root_channel_record", lambda channel_id: None)
+    choice = app_commands.Choice(name="play2win", value="play2win")
+
+    asyncio.run(command.callback(interaction, choice))
+
+    assert calls == [(45, 10, "play2win")]
+    interaction.response.send_message.assert_awaited_once_with(
+        "✅ 参加種別を `play2win` に切り替えました。",
+        ephemeral=True,
+    )
+    channel.send.assert_awaited_once_with("@user が参加種別を `play2win` に切り替えました。")
+
+
+def test_switchteam_command_notifies_both_channels_when_split(monkeypatch):
+    monkeypatch.setattr(switchteam_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    switchteam_module.register_command(group, make_context())
+    command = get_command(group, "switchteam")
+    root_channel = make_text_channel(channel_id=45, name="ctf-demo-p4f")
+    p2w_channel = make_text_channel(channel_id=46, name="ctf-demo-p2w")
+    guild = types.SimpleNamespace(get_channel=lambda channel_id: {45: root_channel, 46: p2w_channel}.get(channel_id))
+    interaction = types.SimpleNamespace(
+        channel=root_channel,
+        guild=guild,
+        user=types.SimpleNamespace(id=10, mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        switchteam_module,
+        "get_participant",
+        lambda channel_id, user_id: types.SimpleNamespace(user_id=user_id, participation_type="play4fun"),
+    )
+    monkeypatch.setattr(switchteam_module, "upsert_participant_record", lambda *args: None)
+    monkeypatch.setattr(
+        switchteam_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=45, split_completed=1),
+    )
+    monkeypatch.setattr(
+        switchteam_module,
+        "get_team_channel_record",
+        lambda root_channel_id, team_type: types.SimpleNamespace(channel_id=46),
+    )
+    choice = app_commands.Choice(name="play2win", value="play2win")
+
+    asyncio.run(command.callback(interaction, choice))
+
+    root_channel.send.assert_awaited_once_with("@user が参加種別を `play2win` に切り替えました。")
+    p2w_channel.send.assert_awaited_once_with("@user が参加種別を `play2win` に切り替えました。")
+
+
+def test_switchteam_command_rejects_non_participants(monkeypatch):
+    monkeypatch.setattr(switchteam_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    switchteam_module.register_command(group, make_context())
+    command = get_command(group, "switchteam")
+    interaction = types.SimpleNamespace(
+        channel=make_text_channel(channel_id=45),
+        user=types.SimpleNamespace(id=10),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(switchteam_module, "get_participant", lambda channel_id, user_id: None)
+    choice = app_commands.Choice(name="play2win", value="play2win")
+
+    asyncio.run(command.callback(interaction, choice))
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "❌ まだこのCTFに参加していません。参加ボタンから参加してください。",
+        ephemeral=True,
+    )
 
 
 def test_solve_command_handles_unsolved_thread(monkeypatch):

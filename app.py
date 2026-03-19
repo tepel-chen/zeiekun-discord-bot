@@ -1,4 +1,5 @@
 import logging
+import asyncio
 
 import discord
 from discord import app_commands
@@ -7,6 +8,7 @@ from commands.context import CommandContext
 from commands.registry import register_commands
 from db import init_database
 from services.join_service import JoinService
+from services.split_service import SplitService
 
 
 def create_intents():
@@ -32,7 +34,9 @@ def create_application(settings):
     )
     register_commands(ctf_commands, context)
 
-    join_service = JoinService(logger=logger, ctf_role_id=settings.ctf_role_id)
+    split_service = SplitService(bot=bot, logger=logger)
+    join_service = JoinService(logger=logger, ctf_role_id=settings.ctf_role_id, split_service=split_service)
+    split_task = None
 
     @bot.event
     async def on_interaction(interaction: discord.Interaction):
@@ -40,6 +44,7 @@ def create_application(settings):
 
     @bot.event
     async def on_ready():
+        nonlocal split_task
         logger.info(f"Logged in as {bot.user} (id={bot.user.id})")
         init_database()
         logger.info("Database initialized")
@@ -49,6 +54,16 @@ def create_application(settings):
             logger.info("Slash commands synced to the guild.")
         except Exception:
             logger.exception("Failed to sync commands")
+        if split_task is None or split_task.done():
+            split_task = asyncio.create_task(split_loop())
+
+    async def split_loop():
+        while not bot.is_closed():
+            try:
+                await split_service.run_pending_splits(settings.guild_id)
+            except Exception:
+                logger.exception("Failed to process pending channel splits")
+            await asyncio.sleep(60)
 
     guild_obj = discord.Object(id=settings.guild_id)
     tree.add_command(ctf_commands, guild=guild_obj)

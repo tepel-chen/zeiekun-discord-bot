@@ -34,7 +34,11 @@ def test_on_ready_initializes_database_and_syncs(monkeypatch):
     bot._connection.user = types.SimpleNamespace(id=5)
     init_database = Mock()
     sync = AsyncMock()
+    def create_task(coro):
+        coro.close()
+        return Mock()
     monkeypatch.setattr(app_module, "init_database", init_database)
+    monkeypatch.setattr(app_module.asyncio, "create_task", create_task)
     tree.sync = sync
 
     asyncio.run(bot.on_ready())
@@ -55,6 +59,7 @@ def test_on_ready_logs_sync_failures(monkeypatch):
     bot, tree, _, _ = app_module.create_application(make_settings())
     bot._connection.user = types.SimpleNamespace(id=5)
     monkeypatch.setattr(app_module, "init_database", Mock())
+    monkeypatch.setattr(app_module.asyncio, "create_task", lambda coro: coro.close() or Mock())
     tree.sync = AsyncMock(side_effect=RuntimeError("boom"))
 
     asyncio.run(bot.on_ready())
