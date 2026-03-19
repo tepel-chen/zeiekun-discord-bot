@@ -81,6 +81,27 @@ def test_on_ready_logs_sync_failures(monkeypatch):
     logger.exception.assert_called_once_with("Failed to sync commands")
 
 
+def test_on_ready_reuses_running_split_task(monkeypatch):
+    bot, tree, _, _ = app_module.create_application(make_settings())
+    bot._connection.user = types.SimpleNamespace(id=5)
+    monkeypatch.setattr(app_module, "init_database", Mock())
+    task = types.SimpleNamespace(done=lambda: False)
+    monkeypatch.setattr(app_module.asyncio, "create_task", lambda coro: coro.close() or task)
+    tree.sync = AsyncMock()
+
+    asyncio.run(bot.on_ready())
+    asyncio.run(bot.on_ready())
+
+    tree.sync.assert_awaited()
+
+
+def test_create_intents_enables_required_flags():
+    intents = app_module.create_intents()
+
+    assert intents.guilds is True
+    assert intents.members is True
+
+
 def test_app_command_error_uses_followup_after_response_started(monkeypatch):
     bot, tree, _, _ = app_module.create_application(make_settings())
     interaction = types.SimpleNamespace(
