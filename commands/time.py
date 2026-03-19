@@ -1,10 +1,8 @@
-from datetime import datetime
-
 import discord
 from discord import app_commands
 
 from db import get_root_channel_record, is_bot_created_channel
-from services.time_service import build_time_response
+from services.time_service import build_time_response, tokyo_now
 
 
 def register_command(ctf_commands: app_commands.Group, context):
@@ -32,7 +30,7 @@ def register_command(ctf_commands: app_commands.Group, context):
                 record.channel_name,
                 record.start_time,
                 record.end_time,
-                datetime.now(),
+                tokyo_now(),
             ),
             ephemeral=True,
         )

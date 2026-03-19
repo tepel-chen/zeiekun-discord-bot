@@ -12,8 +12,12 @@ class TimeParseError(ValueError):
     pass
 
 
+def tokyo_now() -> datetime:
+    return datetime.now(TOKYO).replace(tzinfo=None)
+
+
 def parse_datetime_input(value: str, relative_base: datetime | None = None) -> datetime:
-    base = relative_base or datetime.now(TOKYO)
+    base = relative_base or tokyo_now()
     settings = {
         "TIMEZONE": "Asia/Tokyo",
         "TO_TIMEZONE": "Asia/Tokyo",
@@ -31,7 +35,16 @@ def parse_datetime_input(value: str, relative_base: datetime | None = None) -> d
 
 
 def to_discord_timestamp(value: datetime, style: str = "F") -> str:
-    return f"<t:{int(value.replace(tzinfo=TOKYO).timestamp())}:{style}>"
+    if value.tzinfo is None:
+        aware_value = value.replace(tzinfo=TOKYO)
+    else:
+        aware_value = value.astimezone(TOKYO)
+    return f"<t:{int(aware_value.timestamp())}:{style}>"
+
+
+def validate_time_range(start_time: Optional[datetime], end_time: Optional[datetime]):
+    if start_time is not None and end_time is not None and end_time < start_time:
+        raise TimeParseError("終了時刻は開始時刻以降にしてください。")
 
 
 def format_datetime(value: Optional[datetime]) -> str:

@@ -3,7 +3,13 @@ from discord import app_commands
 
 from db import UPDATE_UNSET, get_root_channel_record, is_bot_created_channel, update_channel_record
 from services.split_service import SplitService
-from services.time_service import TimeParseError, format_datetime, format_hour_delta, parse_datetime_input
+from services.time_service import (
+    TimeParseError,
+    format_datetime,
+    format_hour_delta,
+    parse_datetime_input,
+    validate_time_range,
+)
 
 
 def register_command(ctf_commands: app_commands.Group, context):
@@ -51,6 +57,13 @@ def register_command(ctf_commands: app_commands.Group, context):
 
         root_record = get_root_channel_record(channel.id)
         target_channel_id = root_record.channel_id if root_record is not None else channel.id
+        effective_start_time = parsed_start_time if start_time is not None else (root_record.start_time if root_record is not None else None)
+        effective_end_time = parsed_end_time if end_time is not None else (root_record.end_time if root_record is not None else None)
+        try:
+            validate_time_range(effective_start_time, effective_end_time)
+        except TimeParseError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
         updated = update_channel_record(
             target_channel_id,
             team_mode=teammode.value if teammode is not None else UPDATE_UNSET,

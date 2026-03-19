@@ -171,6 +171,33 @@ def test_create_command_stores_times(monkeypatch):
     assert kwargs["end_time"] == datetime(2026, 3, 21, 12, 0)
 
 
+def test_create_command_rejects_end_before_start(monkeypatch):
+    monkeypatch.setattr(create_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(create_module.discord, "Thread", FakeThread)
+    group = app_commands.Group(name="ctf", description="CTF")
+    create_module.register_command(group, make_context())
+    command = get_command(group, "create")
+
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(id=44, text_channels=[], categories=[]),
+        channel=make_text_channel(),
+        response=types.SimpleNamespace(defer=AsyncMock()),
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+
+    monkeypatch.setattr(create_module, "ensure_category", AsyncMock(return_value="category"))
+    monkeypatch.setattr(create_module, "create_private_channel", AsyncMock())
+    monkeypatch.setattr(create_module, "add_channel_record", lambda *args, **kwargs: None)
+
+    asyncio.run(command.callback(interaction, "demo", "2026-03-21 12:00", "2026-03-20 10:00"))
+
+    interaction.followup.send.assert_awaited_once_with(
+        content="終了時刻は開始時刻以降にしてください。",
+        ephemeral=True,
+    )
+    create_module.create_private_channel.assert_not_awaited()
+
+
 def test_archive_command_rejects_non_bot_channel(monkeypatch):
     monkeypatch.setattr(archive_module.discord, "TextChannel", FakeTextChannel)
     group = app_commands.Group(name="ctf", description="CTF")
@@ -301,6 +328,36 @@ def test_ctfconf_command_updates_times(monkeypatch):
     interaction.response.send_message.assert_awaited_once()
 
 
+def test_ctfconf_command_rejects_end_before_existing_start(monkeypatch):
+    monkeypatch.setattr(ctfconf_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    ctfconf_module.register_command(group, make_context())
+    command = get_command(group, "ctfconf")
+    channel = make_text_channel()
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(ctfconf_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        ctfconf_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(
+            channel_id=channel_id,
+            start_time=datetime(2026, 3, 21, 12, 0),
+            end_time=None,
+        ),
+    )
+    monkeypatch.setattr(ctfconf_module, "update_channel_record", lambda *args, **kwargs: True)
+
+    asyncio.run(command.callback(interaction, None, "2026-03-20 10:00", None))
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "終了時刻は開始時刻以降にしてください。",
+        ephemeral=True,
+    )
+
+
 def test_time_command_displays_schedule(monkeypatch):
     monkeypatch.setattr(time_module.discord, "TextChannel", FakeTextChannel)
     group = app_commands.Group(name="ctf", description="CTF")
@@ -321,11 +378,7 @@ def test_time_command_displays_schedule(monkeypatch):
             end_time=datetime(2026, 3, 21, 12, 0),
         ),
     )
-    class FakeDateTime(datetime):
-        @classmethod
-        def now(cls):
-            return cls(2026, 3, 20, 9, 0)
-    monkeypatch.setattr(time_module, "datetime", FakeDateTime)
+    monkeypatch.setattr(time_module, "tokyo_now", lambda: datetime(2026, 3, 20, 9, 0))
 
     asyncio.run(command.callback(interaction))
 

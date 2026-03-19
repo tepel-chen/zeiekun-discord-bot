@@ -12,6 +12,7 @@ from db import (
     update_channel_record,
 )
 from services.channel_service import create_private_channel
+from services.time_service import tokyo_now
 
 
 TEAM_TYPES = ("play2win", "play4fun")
@@ -40,7 +41,7 @@ class SplitService:
         if guild is None:
             return
 
-        now = datetime.now()
+        now = tokyo_now()
         for record in get_channels_pending_split(now):
             await self.reconcile_channel_state(guild, record.channel_id, now)
 
@@ -49,7 +50,7 @@ class SplitService:
         if root_record is None:
             return
 
-        current_time = now or datetime.now()
+        current_time = now or tokyo_now()
         if root_record.team_mode == "split":
             await self.split_channel(guild, root_record.channel_id, force=True)
             return

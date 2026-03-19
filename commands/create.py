@@ -10,7 +10,7 @@ from services.channel_service import (
     ensure_category,
     get_participant_count,
 )
-from services.time_service import TimeParseError, parse_datetime_input
+from services.time_service import TimeParseError, parse_datetime_input, validate_time_range
 
 
 def register_command(ctf_commands: app_commands.Group, context):
@@ -43,6 +43,7 @@ def register_command(ctf_commands: app_commands.Group, context):
         try:
             parsed_start_time = parse_datetime_input(start_time) if start_time else None
             parsed_end_time = parse_datetime_input(end_time) if end_time else None
+            validate_time_range(parsed_start_time, parsed_end_time)
         except TimeParseError as exc:
             await interaction.followup.send(content=str(exc), ephemeral=True)
             return
