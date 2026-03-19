@@ -7,6 +7,7 @@ from discord import app_commands
 from commands.context import CommandContext
 from commands.registry import register_commands
 from db import init_database
+from interaction_errors import format_interaction_error, send_interaction_error
 from services.join_service import JoinService
 from services.split_service import SplitService
 
@@ -40,7 +41,11 @@ def create_application(settings):
 
     @bot.event
     async def on_interaction(interaction: discord.Interaction):
-        await join_service.route_interaction(interaction)
+        try:
+            await join_service.route_interaction(interaction)
+        except Exception as exc:
+            logger.exception("Failed to handle interaction")
+            await send_interaction_error(interaction, exc)
 
     @bot.event
     async def on_ready():
@@ -64,6 +69,11 @@ def create_application(settings):
             except Exception:
                 logger.exception("Failed to process pending channel splits")
             await asyncio.sleep(60)
+
+    @tree.error
+    async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+        logger.exception("App command failed", exc_info=error)
+        await send_interaction_error(interaction, error)
 
     guild_obj = discord.Object(id=settings.guild_id)
     tree.add_command(ctf_commands, guild=guild_obj)

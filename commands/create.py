@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 
 from db import add_channel_record, is_bot_created_channel
+from interaction_errors import UserFacingError, send_interaction_error
 from services.join_service import build_join_view
 from services.channel_service import (
     allocate_channel_name,
@@ -31,11 +32,7 @@ def register_command(ctf_commands: app_commands.Group, context):
         assert guild is not None, "This command must be used in a guild"
         current_channel = interaction.channel
         if isinstance(current_channel, discord.TextChannel) and is_bot_created_channel(current_channel.id):
-            await interaction.response.send_message(
-                "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネル内では使用できません。")
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         category = await ensure_category(guild, context.category_name)
@@ -45,7 +42,7 @@ def register_command(ctf_commands: app_commands.Group, context):
             parsed_end_time = parse_datetime_input(end_time) if end_time else None
             validate_time_range(parsed_start_time, parsed_end_time)
         except TimeParseError as exc:
-            await interaction.followup.send(content=str(exc), ephemeral=True)
+            await send_interaction_error(interaction, UserFacingError(str(exc)))
             return
 
         channel = await create_private_channel(guild, final_name, category)

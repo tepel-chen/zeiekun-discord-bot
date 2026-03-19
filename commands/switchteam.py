@@ -8,6 +8,7 @@ from db import (
     is_bot_created_channel,
     upsert_participant_record,
 )
+from interaction_errors import UserFacingError
 from services.split_service import SplitService
 
 
@@ -24,19 +25,11 @@ def register_command(ctf_commands: app_commands.Group, context):
     async def ctf_switchteam(interaction: discord.Interaction, team: app_commands.Choice[str]):
         channel = interaction.channel
         if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            await interaction.response.send_message(
-                "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         participant = get_participant(channel.id, interaction.user.id)
         if participant is None:
-            await interaction.response.send_message(
-                "❌ まだこのCTFに参加していません。参加ボタンから参加してください。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ まだこのCTFに参加していません。参加ボタンから参加してください。")
 
         upsert_participant_record(channel.id, interaction.user.id, team.value)
         split_service = SplitService(context.bot, context.logger)

@@ -1,6 +1,7 @@
 import discord
 
 from db import upsert_participant_record
+from interaction_errors import UserFacingError
 from services.channel_service import build_join_announcement, get_participant_count
 
 
@@ -57,22 +58,18 @@ class JoinService:
     async def handle_join(self, interaction: discord.Interaction, custom_id: str, skip_check: bool = False):
         parts = custom_id.split(":")
         if len(parts) != 3:
-            await interaction.response.send_message("Button is misconfigured.", ephemeral=True)
-            return
+            raise UserFacingError("Button is misconfigured.")
         _, channel_id_text, participation_type = parts
         try:
             channel_id = int(channel_id_text)
         except ValueError:
-            await interaction.response.send_message("Button is misconfigured.", ephemeral=True)
-            return
+            raise UserFacingError("Button is misconfigured.")
         if participation_type not in PARTICIPATION_LABELS:
-            await interaction.response.send_message("Button is misconfigured.", ephemeral=True)
-            return
+            raise UserFacingError("Button is misconfigured.")
 
         guild = interaction.guild
         if guild is None:
-            await interaction.response.send_message("This only works inside a server.", ephemeral=True)
-            return
+            raise UserFacingError("This only works inside a server.")
 
         target_channel_id = (
             self.split_service.resolve_target_channel_id(channel_id, participation_type)
@@ -81,8 +78,7 @@ class JoinService:
         )
         channel = guild.get_channel(target_channel_id) or await guild.fetch_channel(target_channel_id)
         if not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message("Target channel not found.", ephemeral=True)
-            return
+            raise UserFacingError("Target channel not found.")
 
         user: discord.Member = interaction.user
         if not any(role.id == self.ctf_role_id for role in user.roles) and not skip_check:
@@ -93,58 +89,44 @@ class JoinService:
             )
             return
 
-        try:
-            current = channel.overwrites_for(user)
-            if current.view_channel:
-                upsert_participant_record(channel.id, user.id, participation_type)
-                if self.split_service is not None:
-                    await self.split_service.sync_participant_channels(guild, channel_id, user, participation_type)
-                await interaction.response.send_message(
-                    f"{channel.mention} に既に参加しています。参加種別を `{PARTICIPATION_LABELS[participation_type]}` に更新しました",
-                    ephemeral=True,
-                )
-                return
-
-            await channel.set_permissions(
-                user,
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-            )
+        current = channel.overwrites_for(user)
+        if current.view_channel:
             upsert_participant_record(channel.id, user.id, participation_type)
             if self.split_service is not None:
                 await self.split_service.sync_participant_channels(guild, channel_id, user, participation_type)
             await interaction.response.send_message(
-                f"{channel.mention}に `{PARTICIPATION_LABELS[participation_type]}` として参加しました",
+                f"{channel.mention} に既に参加しています。参加種別を `{PARTICIPATION_LABELS[participation_type]}` に更新しました",
                 ephemeral=True,
             )
-            await channel.send(f"{user.mention}が `{PARTICIPATION_LABELS[participation_type]}` として参加しました")
-            await self.update_join_message(interaction, channel)
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "そのチャンネルの権限を編集する権限がありません。", ephemeral=True
-            )
-        except Exception:
-            self.logger.exception("Failed to grant access")
-            await interaction.response.send_message("Something went wrong.", ephemeral=True)
+            return
+
+        await channel.set_permissions(
+            user,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+        )
+        upsert_participant_record(channel.id, user.id, participation_type)
+        if self.split_service is not None:
+            await self.split_service.sync_participant_channels(guild, channel_id, user, participation_type)
+        await interaction.response.send_message(
+            f"{channel.mention}に `{PARTICIPATION_LABELS[participation_type]}` として参加しました",
+            ephemeral=True,
+        )
+        await channel.send(f"{user.mention}が `{PARTICIPATION_LABELS[participation_type]}` として参加しました")
+        await self.update_join_message(interaction, channel)
 
     async def handle_join_new(self, interaction: discord.Interaction, custom_id: str):
         guild = interaction.guild
         if guild is None:
-            await interaction.response.send_message("This only works inside a server.", ephemeral=True)
-            return
+            raise UserFacingError("This only works inside a server.")
 
         user: discord.Member = interaction.user
         ctf_role = guild.get_role(self.ctf_role_id)
+        if ctf_role is None:
+            raise UserFacingError("CTF用ロールが見つかりません。")
 
-        try:
-            await user.add_roles(ctf_role, reason="CTF join gate passed")
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "ロールを付与できません（権限またはロール順を確認してください）。", ephemeral=True
-            )
-            return
-
+        await user.add_roles(ctf_role, reason="CTF join gate passed")
         await self.handle_join(interaction, custom_id, True)
 
     def build_join_gate_view(self, channel_id: int, channel_name: str, participation_type: str) -> discord.ui.View:

@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
+from interaction_errors import UserFacingError
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -68,9 +69,12 @@ def test_handle_join_rejects_invalid_channel_id():
     response = types.SimpleNamespace(send_message=AsyncMock())
     interaction = types.SimpleNamespace(response=response)
 
-    asyncio.run(service.handle_join(interaction, "ctf_join:abc:play2win"))
-
-    response.send_message.assert_awaited_once_with("Button is misconfigured.", ephemeral=True)
+    try:
+        asyncio.run(service.handle_join(interaction, "ctf_join:abc:play2win"))
+    except UserFacingError as exc:
+        assert str(exc) == "Button is misconfigured."
+    else:
+        raise AssertionError("UserFacingError was not raised")
 
 
 def test_handle_join_shows_rule_gate_when_role_missing():
@@ -170,6 +174,22 @@ def test_handle_join_new_adds_role_and_retries_join():
 
     user.add_roles.assert_awaited_once_with(role, reason="CTF join gate passed")
     service.handle_join.assert_awaited_once_with(interaction, "ctf_join_new:123:play2win", True)
+
+
+def test_handle_join_new_rejects_missing_role():
+    service = create_join_service()
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(get_role=lambda role_id: None),
+        user=types.SimpleNamespace(add_roles=AsyncMock()),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+
+    try:
+        asyncio.run(service.handle_join_new(interaction, "ctf_join_new:123:play2win"))
+    except UserFacingError as exc:
+        assert str(exc) == "CTF用ロールが見つかりません。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
 
 
 def test_update_join_message_returns_without_message():

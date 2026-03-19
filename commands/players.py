@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 
 from db import get_participants, is_bot_created_channel
+from interaction_errors import UserFacingError
 
 
 def register_command(ctf_commands: app_commands.Group, context):
@@ -10,19 +11,11 @@ def register_command(ctf_commands: app_commands.Group, context):
     async def ctf_players(interaction: discord.Interaction):
         channel = interaction.channel
         if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            await interaction.response.send_message(
-                "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         participants = get_participants(channel.id)
         if not participants:
-            await interaction.response.send_message(
-                "❌ 参加者情報がありません。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ 参加者情報がありません。")
 
         grouped = {"play2win": [], "play4fun": []}
         for participant in participants:

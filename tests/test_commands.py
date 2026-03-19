@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 
 from commands.context import CommandContext
+from interaction_errors import UserFacingError
 
 
 ctfconf_module = importlib.import_module("commands.ctfconf")
@@ -135,12 +136,12 @@ def test_create_command_rejects_bot_created_channel(monkeypatch):
     )
     monkeypatch.setattr(create_module, "is_bot_created_channel", lambda channel_id: True)
 
-    asyncio.run(command.callback(interaction, "demo"))
-
-    response.send_message.assert_awaited_once_with(
-        "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。",
-        ephemeral=True,
-    )
+    try:
+        asyncio.run(command.callback(interaction, "demo"))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
     response.defer.assert_not_awaited()
 
 
@@ -192,7 +193,7 @@ def test_create_command_rejects_end_before_start(monkeypatch):
     asyncio.run(command.callback(interaction, "demo", "2026-03-21 12:00", "2026-03-20 10:00"))
 
     interaction.followup.send.assert_awaited_once_with(
-        content="終了時刻は開始時刻以降にしてください。",
+        "終了時刻は開始時刻以降にしてください。",
         ephemeral=True,
     )
     create_module.create_private_channel.assert_not_awaited()
@@ -210,12 +211,12 @@ def test_archive_command_rejects_non_bot_channel(monkeypatch):
     )
     monkeypatch.setattr(archive_module, "is_bot_created_channel", lambda channel_id: False)
 
-    asyncio.run(command.callback(interaction))
-
-    interaction.response.send_message.assert_awaited_once_with(
-        "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
-        ephemeral=True,
-    )
+    try:
+        asyncio.run(command.callback(interaction))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
 
 
 def test_archive_command_success(monkeypatch):
@@ -350,12 +351,12 @@ def test_ctfconf_command_rejects_end_before_existing_start(monkeypatch):
     )
     monkeypatch.setattr(ctfconf_module, "update_channel_record", lambda *args, **kwargs: True)
 
-    asyncio.run(command.callback(interaction, None, "2026-03-20 10:00", None))
-
-    interaction.response.send_message.assert_awaited_once_with(
-        "終了時刻は開始時刻以降にしてください。",
-        ephemeral=True,
-    )
+    try:
+        asyncio.run(command.callback(interaction, None, "2026-03-20 10:00", None))
+    except UserFacingError as exc:
+        assert str(exc) == "終了時刻は開始時刻以降にしてください。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
 
 
 def test_time_command_displays_schedule(monkeypatch):
@@ -505,12 +506,12 @@ def test_switchteam_command_rejects_non_participants(monkeypatch):
     monkeypatch.setattr(switchteam_module, "get_participant", lambda channel_id, user_id: None)
     choice = app_commands.Choice(name="play2win", value="play2win")
 
-    asyncio.run(command.callback(interaction, choice))
-
-    interaction.response.send_message.assert_awaited_once_with(
-        "❌ まだこのCTFに参加していません。参加ボタンから参加してください。",
-        ephemeral=True,
-    )
+    try:
+        asyncio.run(command.callback(interaction, choice))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ まだこのCTFに参加していません。参加ボタンから参加してください。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
 
 
 def test_solve_command_handles_unsolved_thread(monkeypatch):

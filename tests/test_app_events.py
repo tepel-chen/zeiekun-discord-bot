@@ -29,6 +29,20 @@ def test_on_interaction_routes_to_join_service(monkeypatch):
     join_service.route_interaction.assert_awaited_once_with(interaction)
 
 
+def test_on_interaction_reports_errors_ephemerally(monkeypatch):
+    bot, _, _, join_service = app_module.create_application(make_settings())
+    join_service.route_interaction = AsyncMock(side_effect=RuntimeError("boom"))
+    interaction = types.SimpleNamespace(
+        response=types.SimpleNamespace(send_message=AsyncMock(), is_done=lambda: False),
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+
+    asyncio.run(bot.on_interaction(interaction))
+
+    interaction.response.send_message.assert_awaited_once_with("エラー: boom", ephemeral=True)
+    interaction.followup.send.assert_not_awaited()
+
+
 def test_on_ready_initializes_database_and_syncs(monkeypatch):
     bot, tree, _, _ = app_module.create_application(make_settings())
     bot._connection.user = types.SimpleNamespace(id=5)
@@ -65,3 +79,38 @@ def test_on_ready_logs_sync_failures(monkeypatch):
     asyncio.run(bot.on_ready())
 
     logger.exception.assert_called_once_with("Failed to sync commands")
+
+
+def test_app_command_error_uses_followup_after_response_started(monkeypatch):
+    bot, tree, _, _ = app_module.create_application(make_settings())
+    interaction = types.SimpleNamespace(
+        response=types.SimpleNamespace(send_message=AsyncMock(), is_done=lambda: True),
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+
+    asyncio.run(tree.on_error(interaction, app_module.app_commands.AppCommandError("boom")))
+
+    interaction.followup.send.assert_awaited_once_with("エラー: boom", ephemeral=True)
+    interaction.response.send_message.assert_not_awaited()
+
+
+def test_app_command_error_formats_forbidden(monkeypatch):
+    bot, tree, _, _ = app_module.create_application(make_settings())
+    interaction = types.SimpleNamespace(
+        response=types.SimpleNamespace(send_message=AsyncMock(), is_done=lambda: False),
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+    error = app_module.app_commands.CommandInvokeError(
+        Mock(),
+        app_module.discord.Forbidden(
+            response=types.SimpleNamespace(status=403, reason="Forbidden"),
+            message="Missing Access",
+        ),
+    )
+
+    asyncio.run(tree.on_error(interaction, error))
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "その操作をする権限がありません",
+        ephemeral=True,
+    )

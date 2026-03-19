@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 
 from db import is_bot_created_channel
+from interaction_errors import UserFacingError
 from services.channel_service import (
     build_missing_search_response,
     build_search_response,
@@ -26,11 +27,7 @@ def register_command(ctf_commands: app_commands.Group, context):
     ):
         channel = interaction.channel
         if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            await interaction.response.send_message(
-                "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         search_category = normalize_category(category) if category else None
 
@@ -41,10 +38,6 @@ def register_command(ctf_commands: app_commands.Group, context):
         matching_threads = filter_threads(matching_threads, search_category, solved)
 
         if not matching_threads:
-            await interaction.response.send_message(
-                build_missing_search_response(search_category, solved),
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError(build_missing_search_response(search_category, solved))
 
         await interaction.response.send_message(build_search_response(matching_threads), ephemeral=True)

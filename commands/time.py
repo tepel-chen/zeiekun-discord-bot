@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 
 from db import get_root_channel_record, is_bot_created_channel
+from interaction_errors import UserFacingError
 from services.time_service import build_time_response, tokyo_now
 
 
@@ -11,19 +12,11 @@ def register_command(ctf_commands: app_commands.Group, context):
     async def ctf_time(interaction: discord.Interaction):
         channel = interaction.channel
         if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            await interaction.response.send_message(
-                "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         record = get_root_channel_record(channel.id)
         if record is None:
-            await interaction.response.send_message(
-                "❌ CTF設定が見つかりません。",
-                ephemeral=True,
-            )
-            return
+            raise UserFacingError("❌ CTF設定が見つかりません。")
 
         await interaction.response.send_message(
             build_time_response(
