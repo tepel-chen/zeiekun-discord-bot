@@ -76,7 +76,9 @@ def register_command(ctf_commands: app_commands.Group, context):
             split_service = SplitService(context.bot, context.logger)
             await split_service.reconcile_channel_state(interaction.guild, target_channel_id)
 
-        await interaction.response.send_message(
-            "✅ CTF設定を更新しました\n" + "\n".join(messages),
-            ephemeral=True,
-        )
+        result_message = "✅ CTF設定を更新しました\n" + "\n".join(messages)
+        await interaction.response.send_message(result_message, ephemeral=True)
+        if isinstance(channel, discord.TextChannel):
+            await channel.send(
+                f"{interaction.user.mention} が CTF 設定を更新しました。\n" + "\n".join(messages)
+            )

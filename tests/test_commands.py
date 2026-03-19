@@ -255,21 +255,42 @@ def test_archive_command_success(monkeypatch):
     group = app_commands.Group(name="ctf", description="CTF")
     archive_module.register_command(group, make_context())
     command = get_command(group, "archive")
-    channel = make_text_channel()
+    channel = make_text_channel(channel_id=10, name="ctf-root")
+    team_channel = make_text_channel(channel_id=20, name="ctf-team")
     interaction = types.SimpleNamespace(
-        guild=types.SimpleNamespace(),
+        guild=types.SimpleNamespace(get_channel=lambda channel_id: {10: channel, 20: team_channel}.get(channel_id)),
         channel=channel,
+        user=types.SimpleNamespace(mention="@user"),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
+    updates = []
     monkeypatch.setattr(archive_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(archive_module, "ensure_category", AsyncMock(return_value="archive-category"))
+    monkeypatch.setattr(
+        archive_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=10),
+    )
+    monkeypatch.setattr(
+        archive_module,
+        "get_team_channels",
+        lambda root_channel_id: [types.SimpleNamespace(channel_id=20)],
+    )
+    monkeypatch.setattr(
+        archive_module,
+        "update_channel_record",
+        lambda channel_id, **kwargs: updates.append((channel_id, kwargs)) or True,
+    )
 
     asyncio.run(command.callback(interaction))
 
     channel.edit.assert_awaited_once_with(category="archive-category")
+    team_channel.edit.assert_awaited_once_with(category="archive-category")
+    assert updates == [(10, {"archived": 1}), (20, {"archived": 1})]
     interaction.response.send_message.assert_awaited_once_with(
         "✅ チャンネル #ctf-test をカテゴリー「ARCHIVE」へ移動しました。"
     )
+    channel.send.assert_awaited_once_with("@user がこの CTF をアーカイブしました。")
 
 
 def test_chal_command_success(monkeypatch):
@@ -330,6 +351,7 @@ def test_ctfconf_command_updates_times(monkeypatch):
     channel = make_text_channel()
     interaction = types.SimpleNamespace(
         channel=channel,
+        user=types.SimpleNamespace(mention="@user"),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     updates = []
@@ -358,6 +380,8 @@ def test_ctfconf_command_updates_times(monkeypatch):
     assert updates[0][1]["team_mode"] == "split"
     reconcile.assert_awaited_once_with(interaction.guild, channel.id)
     interaction.response.send_message.assert_awaited_once()
+    channel.send.assert_awaited_once()
+    assert "@user が CTF 設定を更新しました。" in channel.send.await_args.args[0]
 
 
 def test_ctfconf_command_rejects_end_before_existing_start(monkeypatch):

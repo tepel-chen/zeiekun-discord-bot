@@ -24,6 +24,7 @@ class CTFChannel(Base):
     team_type = Column(Text, nullable=False, server_default=text("'all'"))
     team_mode = Column(Text, nullable=False, server_default=text("'auto'"))
     split_completed = Column(Integer, nullable=False, server_default=text("0"))
+    archived = Column(Integer, nullable=False, server_default=text("0"))
     start_time = Column(TIMESTAMP, nullable=True)
     end_time = Column(TIMESTAMP, nullable=True)
     created_at = Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
@@ -78,6 +79,7 @@ def add_channel_record(
     team_type: str = "all",
     team_mode: str = "auto",
     split_completed: int = 0,
+    archived: int = 0,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
 ):
@@ -92,6 +94,7 @@ def add_channel_record(
                 team_type=team_type,
                 team_mode=team_mode,
                 split_completed=split_completed,
+                archived=archived,
                 start_time=start_time,
                 end_time=end_time,
             )
@@ -164,6 +167,7 @@ def get_channels_pending_split(now: datetime) -> list[CTFChannel]:
                     CTFChannel.root_channel_id == CTFChannel.channel_id,
                     CTFChannel.team_type == "all",
                     CTFChannel.split_completed == 0,
+                    CTFChannel.archived == 0,
                     CTFChannel.start_time.is_not(None),
                 )
             ).scalars()
@@ -193,6 +197,7 @@ def update_channel_record(
     team_type: str | object = UPDATE_UNSET,
     team_mode: str | object = UPDATE_UNSET,
     split_completed: int | object = UPDATE_UNSET,
+    archived: int | object = UPDATE_UNSET,
     start_time: datetime | None | object = UPDATE_UNSET,
     end_time: datetime | None | object = UPDATE_UNSET,
 ) -> bool:
@@ -212,6 +217,8 @@ def update_channel_record(
             record.team_mode = team_mode
         if split_completed is not UPDATE_UNSET:
             record.split_completed = split_completed
+        if archived is not UPDATE_UNSET:
+            record.archived = archived
         if start_time is not UPDATE_UNSET:
             record.start_time = start_time
         if end_time is not UPDATE_UNSET:
