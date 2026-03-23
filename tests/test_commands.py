@@ -793,7 +793,43 @@ def test_switchteam_command_updates_participation_type(monkeypatch):
         "✅ 参加種別を `play2win` に切り替えました。",
         ephemeral=True,
     )
-    channel.send.assert_awaited_once_with("@user が参加種別を `play2win` に切り替えました。")
+    channel.send.assert_awaited_once_with("@userが `play2win` にチーム変更しました。")
+
+
+def test_switchteam_command_noops_when_team_is_unchanged(monkeypatch):
+    monkeypatch.setattr(switchteam_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    switchteam_module.register_command(group, make_context())
+    command = get_command(group, "switchteam")
+    channel = make_text_channel(channel_id=45)
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        user=types.SimpleNamespace(id=10, mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    calls = []
+    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        switchteam_module,
+        "get_participant",
+        lambda channel_id, user_id: types.SimpleNamespace(user_id=user_id, participation_type="play2win"),
+    )
+    monkeypatch.setattr(
+        switchteam_module,
+        "upsert_participant_record",
+        lambda channel_id, user_id, participation_type: calls.append((channel_id, user_id, participation_type)),
+    )
+    choice = app_commands.Choice(name="play2win", value="play2win")
+
+    try:
+        asyncio.run(command.callback(interaction, choice))
+    except UserFacingError as exc:
+        assert str(exc) == "⚠️ 既に `play2win` に参加しています。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
+
+    assert calls == []
+    channel.send.assert_not_awaited()
 
 
 def test_switchteam_command_notifies_both_channels_when_split(monkeypatch):
@@ -831,8 +867,8 @@ def test_switchteam_command_notifies_both_channels_when_split(monkeypatch):
 
     asyncio.run(command.callback(interaction, choice))
 
-    root_channel.send.assert_awaited_once_with("@user が参加種別を `play2win` に切り替えました。")
-    p2w_channel.send.assert_awaited_once_with("@user が参加種別を `play2win` に切り替えました。")
+    root_channel.send.assert_awaited_once_with("@userが `play2win` にチーム変更しました。")
+    p2w_channel.send.assert_awaited_once_with("@userが `play2win` として参加しました")
 
 
 def test_switchteam_command_rejects_non_participants(monkeypatch):

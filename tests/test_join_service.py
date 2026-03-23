@@ -151,9 +151,11 @@ def test_handle_join_reports_already_joined():
         message=None,
     )
 
+    join_module.get_participant = Mock(return_value=types.SimpleNamespace(participation_type="play4fun"))
     join_module.upsert_participant_record = Mock()
     asyncio.run(service.handle_join(interaction, "ctf_join:123:play4fun"))
 
+    join_module.get_participant.assert_called_once_with(123, 55)
     join_module.upsert_participant_record.assert_called_once_with(123, 55, "play4fun")
     response.send_message.assert_awaited_once_with(
         "#ctf-test に既に参加しています。参加種別を `play4fun` に更新しました",
@@ -209,6 +211,51 @@ def test_handle_join_grants_both_channels_when_disclosed():
     asyncio.run(service.handle_join(interaction, "ctf_join:123:play2win"))
 
     split_service.sync_participant_channels.assert_awaited_once_with(guild, 123, user, "play2win")
+
+
+def test_handle_join_logs_previous_team_when_switching_via_button():
+    join_module.discord.TextChannel = FakeTextChannel
+    old_channel = FakeTextChannel(channel_id=123, name="ctf-p4f", mention="#ctf-p4f")
+    new_channel = FakeTextChannel(channel_id=456, name="ctf-p2w", mention="#ctf-p2w")
+    split_service = types.SimpleNamespace(
+        resolve_target_channel_id=lambda channel_id, participation_type: 123 if participation_type == "play4fun" else 456,
+        sync_participant_channels=AsyncMock(),
+    )
+    service = join_module.JoinService(
+        logger=types.SimpleNamespace(exception=lambda *args, **kwargs: None),
+        ctf_role_id=99,
+        split_service=split_service,
+    )
+    response = types.SimpleNamespace(send_message=AsyncMock())
+    guild = types.SimpleNamespace(
+        get_channel=lambda channel_id: {123: old_channel, 456: new_channel}.get(channel_id),
+        fetch_channel=AsyncMock(),
+    )
+    interaction = types.SimpleNamespace(
+        guild=guild,
+        user=types.SimpleNamespace(id=55, roles=[types.SimpleNamespace(id=99)], mention="@user"),
+        response=response,
+        message=None,
+    )
+    new_channel.overwrites_for = lambda user: types.SimpleNamespace(view_channel=False)
+
+    join_module.get_participant = Mock(return_value=types.SimpleNamespace(participation_type="play4fun"))
+    join_module.upsert_participant_record = Mock()
+
+    asyncio.run(service.handle_join(interaction, "ctf_join:123:play2win"))
+
+    new_channel.set_permissions.assert_awaited_once_with(
+        interaction.user,
+        view_channel=True,
+        send_messages=True,
+        read_message_history=True,
+    )
+    split_service.sync_participant_channels.assert_awaited_once_with(guild, 123, interaction.user, "play2win")
+    old_channel.send.assert_awaited_once_with("@userが `play2win` にチーム変更しました。")
+    response.send_message.assert_awaited_once_with(
+        "#ctf-p2wに `play2win` として参加しました",
+        ephemeral=True,
+    )
 
 
 def test_update_join_message_returns_without_message():

@@ -1,6 +1,6 @@
 import discord
 
-from db import upsert_participant_record
+from db import get_participant, upsert_participant_record
 from interaction_errors import UserFacingError
 from services.channel_service import build_join_announcement, get_participant_count
 
@@ -89,11 +89,28 @@ class JoinService:
             )
             return
 
+        participant = get_participant(channel.id, user.id)
+        previous_participation_type = participant.participation_type if participant is not None else None
+        switched_team = (
+            previous_participation_type is not None
+            and previous_participation_type != participation_type
+        )
         current = channel.overwrites_for(user)
         if current.view_channel:
             upsert_participant_record(channel.id, user.id, participation_type)
             if self.split_service is not None:
                 await self.split_service.sync_participant_channels(guild, channel_id, user, participation_type)
+                if switched_team:
+                    previous_channel_id = self.split_service.resolve_target_channel_id(
+                        channel_id,
+                        previous_participation_type,
+                    )
+                    if previous_channel_id != target_channel_id:
+                        previous_channel = guild.get_channel(previous_channel_id) or await guild.fetch_channel(previous_channel_id)
+                        if isinstance(previous_channel, discord.TextChannel):
+                            await previous_channel.send(
+                                f"{user.mention}が `{PARTICIPATION_LABELS[participation_type]}` にチーム変更しました。"
+                            )
             await interaction.response.send_message(
                 f"{channel.mention} に既に参加しています。参加種別を `{PARTICIPATION_LABELS[participation_type]}` に更新しました",
                 ephemeral=True,
@@ -109,6 +126,17 @@ class JoinService:
         upsert_participant_record(channel.id, user.id, participation_type)
         if self.split_service is not None:
             await self.split_service.sync_participant_channels(guild, channel_id, user, participation_type)
+            if switched_team:
+                previous_channel_id = self.split_service.resolve_target_channel_id(
+                    channel_id,
+                    previous_participation_type,
+                )
+                if previous_channel_id != target_channel_id:
+                    previous_channel = guild.get_channel(previous_channel_id) or await guild.fetch_channel(previous_channel_id)
+                    if isinstance(previous_channel, discord.TextChannel):
+                        await previous_channel.send(
+                            f"{user.mention}が `{PARTICIPATION_LABELS[participation_type]}` にチーム変更しました。"
+                        )
         await interaction.response.send_message(
             f"{channel.mention}に `{PARTICIPATION_LABELS[participation_type]}` として参加しました",
             ephemeral=True,
