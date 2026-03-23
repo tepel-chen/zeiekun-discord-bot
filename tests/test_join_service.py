@@ -258,6 +258,47 @@ def test_handle_join_logs_previous_team_when_switching_via_button():
     )
 
 
+def test_handle_join_logs_previous_team_when_already_in_target_channel():
+    join_module.discord.TextChannel = FakeTextChannel
+    old_channel = FakeTextChannel(channel_id=123, name="ctf-p4f", mention="#ctf-p4f")
+    new_channel = FakeTextChannel(channel_id=456, name="ctf-p2w", mention="#ctf-p2w")
+    new_channel.overwrites_for = lambda user: types.SimpleNamespace(view_channel=True)
+    split_service = types.SimpleNamespace(
+        resolve_target_channel_id=lambda channel_id, participation_type: 123 if participation_type == "play4fun" else 456,
+        sync_participant_channels=AsyncMock(),
+    )
+    service = join_module.JoinService(
+        logger=types.SimpleNamespace(exception=lambda *args, **kwargs: None),
+        ctf_role_id=99,
+        split_service=split_service,
+    )
+    response = types.SimpleNamespace(send_message=AsyncMock())
+    guild = types.SimpleNamespace(
+        get_channel=lambda channel_id: {123: old_channel, 456: new_channel}.get(channel_id),
+        fetch_channel=AsyncMock(),
+    )
+    user = types.SimpleNamespace(id=55, roles=[types.SimpleNamespace(id=99)], mention="@user")
+    interaction = types.SimpleNamespace(
+        guild=guild,
+        user=user,
+        response=response,
+        message=None,
+    )
+
+    join_module.get_participant = Mock(return_value=types.SimpleNamespace(participation_type="play4fun"))
+    join_module.upsert_participant_record = Mock()
+
+    asyncio.run(service.handle_join(interaction, "ctf_join:123:play2win"))
+
+    join_module.upsert_participant_record.assert_called_once_with(456, 55, "play2win")
+    split_service.sync_participant_channels.assert_awaited_once_with(guild, 123, user, "play2win")
+    old_channel.send.assert_awaited_once_with("@userが `play2win` にチーム変更しました。")
+    response.send_message.assert_awaited_once_with(
+        "#ctf-p2w に既に参加しています。参加種別を `play2win` に更新しました",
+        ephemeral=True,
+    )
+
+
 def test_update_join_message_returns_without_message():
     join_module.discord.TextChannel = FakeTextChannel
     service = create_join_service()

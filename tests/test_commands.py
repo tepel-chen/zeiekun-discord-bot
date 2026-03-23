@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 
 from commands.context import CommandContext
-from interaction_errors import UserFacingError
+from interaction_errors import UserFacingCheckFailure, UserFacingError
 
 
 ctfconf_module = importlib.import_module("commands.ctfconf")
@@ -88,6 +88,190 @@ def async_iter(items):
             yield item
 
     return _iterator()
+
+
+def test_permissions_can_use_command_variants():
+    context = make_context()
+    interaction = types.SimpleNamespace(user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=2)]))
+
+    assert permissions_module.can_use_command(interaction, None, context) is True
+    assert permissions_module.can_use_command(interaction, "ctf", context) is True
+    assert permissions_module.can_use_command(interaction, "creator", context) is False
+    assert permissions_module.can_use_command(interaction, "unknown", context) is False
+
+
+def test_permissions_matches_channel_scope_variants(monkeypatch):
+    context = make_context()
+    monkeypatch.setattr(permissions_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(permissions_module.discord, "Thread", FakeThread)
+    monkeypatch.setattr(permissions_module, "is_bot_created_channel", lambda channel_id: channel_id in {10, 20})
+
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=types.SimpleNamespace()),
+        "any",
+        context,
+    ) is True
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=make_text_channel(channel_id=999)),
+        "outside_ctf_channel",
+        context,
+    ) is True
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=make_text_channel(channel_id=10)),
+        "bot_ctf_channel",
+        context,
+    ) is True
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=make_text_channel(channel_id=20)),
+        "bot_ctf_channel_or_thread",
+        context,
+    ) is True
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=make_thread(parent_id=20)),
+        "bot_ctf_channel_or_thread",
+        context,
+    ) is True
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=make_thread(parent_id=None)),
+        "bot_ctf_channel_or_thread",
+        context,
+    ) is False
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=types.SimpleNamespace()),
+        "bot_ctf_channel_or_thread",
+        context,
+    ) is False
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=make_thread(owner_id=999)),
+        "bot_ctf_thread",
+        context,
+    ) is True
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=make_thread(owner_id=111)),
+        "bot_ctf_thread",
+        context,
+    ) is False
+    assert permissions_module.matches_channel_scope(
+        types.SimpleNamespace(channel=types.SimpleNamespace(id=999)),
+        "unknown_scope",
+        context,
+    ) is False
+
+
+def test_permissions_get_channel_scope_error_variants(monkeypatch):
+    context = make_context()
+    monkeypatch.setattr(permissions_module.discord, "Thread", FakeThread)
+
+    assert (
+        permissions_module.get_channel_scope_error(
+            types.SimpleNamespace(channel=types.SimpleNamespace()),
+            "outside_ctf_channel",
+            context,
+        )
+        == "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。"
+    )
+    assert (
+        permissions_module.get_channel_scope_error(
+            types.SimpleNamespace(channel=types.SimpleNamespace()),
+            "bot_ctf_channel",
+            context,
+        )
+        == "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。"
+    )
+    assert (
+        permissions_module.get_channel_scope_error(
+            types.SimpleNamespace(channel=types.SimpleNamespace()),
+            "bot_ctf_channel_or_thread",
+            context,
+        )
+        == "❌ このコマンドはbotによって作成されたチャンネルまたはそのスレッドでのみ使用できます。"
+    )
+    assert (
+        permissions_module.get_channel_scope_error(
+            types.SimpleNamespace(channel=types.SimpleNamespace()),
+            "bot_ctf_thread",
+            context,
+        )
+        == "❌ このコマンドはスレッド内でのみ使用できます。"
+    )
+    assert (
+        permissions_module.get_channel_scope_error(
+            types.SimpleNamespace(channel=make_thread(owner_id=111)),
+            "bot_ctf_thread",
+            context,
+        )
+        == "❌ このスレッドは bot が作成したものではありません。"
+    )
+    assert (
+        permissions_module.get_channel_scope_error(
+            types.SimpleNamespace(channel=types.SimpleNamespace()),
+            "unknown_scope",
+            context,
+        )
+        == "❌ このコマンドはここでは使用できません。"
+    )
+
+
+def test_permissions_require_registered_role_and_context(monkeypatch):
+    context = make_context()
+    interaction = types.SimpleNamespace(
+        user=types.SimpleNamespace(roles=[]),
+        channel=types.SimpleNamespace(id=999),
+    )
+    monkeypatch.setattr(permissions_module.app_commands, "check", lambda predicate: predicate)
+
+    @permissions_module.command_metadata(required_role="ctf", channel_scope="bot_ctf_channel")
+    def register_fn(group=None, ctx=None):
+        return None
+
+    role_predicate = permissions_module.require_registered_role(register_fn, context)
+    context_predicate = permissions_module.require_registered_context(register_fn, context)
+
+    try:
+        asyncio.run(role_predicate(interaction))
+    except UserFacingCheckFailure as exc:
+        assert str(exc) == "❌ このコマンドを実行する権限がありません。"
+    else:
+        raise AssertionError("UserFacingCheckFailure was not raised")
+
+    monkeypatch.setattr(permissions_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(permissions_module, "is_bot_created_channel", lambda channel_id: False)
+    try:
+        asyncio.run(context_predicate(interaction))
+    except UserFacingCheckFailure as exc:
+        assert str(exc) == "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。"
+    else:
+        raise AssertionError("UserFacingCheckFailure was not raised")
+
+    allowed_interaction = types.SimpleNamespace(
+        user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=2)]),
+        channel=make_text_channel(channel_id=10),
+    )
+    monkeypatch.setattr(permissions_module, "is_bot_created_channel", lambda channel_id: True)
+    assert asyncio.run(role_predicate(allowed_interaction)) is True
+    assert asyncio.run(context_predicate(allowed_interaction)) is True
+
+
+def test_permissions_can_use_command_in_context(monkeypatch):
+    context = make_context()
+    monkeypatch.setattr(permissions_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(permissions_module, "is_bot_created_channel", lambda channel_id: True)
+
+    @permissions_module.command_metadata(required_role="ctf", channel_scope="bot_ctf_channel")
+    def register_fn(group=None, ctx=None):
+        return None
+
+    allowed = types.SimpleNamespace(
+        user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=2)]),
+        channel=make_text_channel(channel_id=10),
+    )
+    denied = types.SimpleNamespace(
+        user=types.SimpleNamespace(roles=[]),
+        channel=make_text_channel(channel_id=10),
+    )
+
+    assert permissions_module.can_use_command_in_context(allowed, register_fn, context) is True
+    assert permissions_module.can_use_command_in_context(denied, register_fn, context) is False
 
 
 def test_create_command_success(monkeypatch):
