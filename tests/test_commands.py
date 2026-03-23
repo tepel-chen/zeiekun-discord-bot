@@ -17,6 +17,7 @@ archive_module = importlib.import_module("commands.archive")
 chal_module = importlib.import_module("commands.chal")
 disclose_module = importlib.import_module("commands.disclose")
 players_module = importlib.import_module("commands.players")
+randomname_module = importlib.import_module("commands.randomname")
 search_module = importlib.import_module("commands.search")
 solve_module = importlib.import_module("commands.solve")
 switchteam_module = importlib.import_module("commands.switchteam")
@@ -572,6 +573,58 @@ def test_players_command_displays_grouped_participants(monkeypatch):
         "✅ 参加者一覧 (合計: 2人)\nplay2win: 1人\n<@10>\nplay4fun: 1人\n<@20>",
         ephemeral=True,
     )
+
+
+def test_randomname_command_returns_formatted_candidates(monkeypatch):
+    group = app_commands.Group(name="ctf", description="CTF")
+    randomname_module.register_command(group, make_context())
+    command = get_command(group, "randomname")
+    interaction = types.SimpleNamespace(
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    random_word = Mock()
+    random_word.random_words.return_value = ["falcon", "otter"]
+    monkeypatch.setattr(randomname_module, "RandomWord", lambda: random_word)
+
+    asyncio.run(command.callback(interaction, "2"))
+
+    random_word.random_words.assert_called_once_with(2, include_parts_of_speech=["nouns"])
+    interaction.response.send_message.assert_awaited_once_with(
+        "チーム名候補: \n`full_weak_falcon`\n`full_weak_otter`",
+        ephemeral=False,
+    )
+
+
+def test_randomname_command_rejects_non_numeric_count():
+    group = app_commands.Group(name="ctf", description="CTF")
+    randomname_module.register_command(group, make_context())
+    command = get_command(group, "randomname")
+    interaction = types.SimpleNamespace(
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+
+    try:
+        asyncio.run(command.callback(interaction, "abc"))
+    except UserFacingError as exc:
+        assert str(exc) == "countは数値を入力してください。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
+
+
+def test_randomname_command_rejects_out_of_range_count():
+    group = app_commands.Group(name="ctf", description="CTF")
+    randomname_module.register_command(group, make_context())
+    command = get_command(group, "randomname")
+    interaction = types.SimpleNamespace(
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+
+    try:
+        asyncio.run(command.callback(interaction, "11"))
+    except UserFacingError as exc:
+        assert str(exc) == "countの値が不正です。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
 
 
 def test_switchteam_command_updates_participation_type(monkeypatch):
