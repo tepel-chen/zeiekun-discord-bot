@@ -1,19 +1,22 @@
 import discord
 from discord import app_commands
 
-from db import get_root_channel_record, is_bot_created_channel
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
+from db import get_root_channel_record
 from interaction_errors import UserFacingError
 from services.split_service import SplitService
 from services.time_service import tokyo_now
 
 
+@command_metadata(required_role="creator", channel_scope="bot_ctf_channel")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_creator_role_id)
+    """CTF終了後に両チームのチャンネルを相互公開する。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="disclose", description="終了後に両チームのチャンネルを相互公開する")
     async def ctf_disclose(interaction: discord.Interaction):
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         root_record = get_root_channel_record(channel.id)
         if root_record is None:

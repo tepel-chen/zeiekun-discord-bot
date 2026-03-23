@@ -1,26 +1,28 @@
 import discord
 from discord import app_commands
 
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
 from db import (
     delete_participant_record,
     get_participant,
     get_root_channel_record,
     get_team_channel_record,
-    is_bot_created_channel,
 )
 from interaction_errors import UserFacingError
 
 
+@command_metadata(required_role="ctf", channel_scope="bot_ctf_channel")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_role_id)
+    """参加中のCTFチャンネルから退出し、権限を外す。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="leave", description="CTFチャンネルから退出する")
     async def ctf_leave(interaction: discord.Interaction):
         guild = interaction.guild
         channel = interaction.channel
         if guild is None:
             raise UserFacingError("This command must be used in a guild.")
-        if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         participant = get_participant(channel.id, interaction.user.id)
         if participant is None:

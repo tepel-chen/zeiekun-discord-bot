@@ -1,19 +1,18 @@
 import discord
 from discord import app_commands
 
-from interaction_errors import UserFacingError
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
 
 
+@command_metadata(required_role="ctf", channel_scope="bot_ctf_thread")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_role_id)
+    """チャレンジスレッドを解決済み状態に変更する。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="solve", description="CTFチャンネルのチャレンジスレッドを完了状態にする")
     async def ctf_solve(interaction: discord.Interaction):
         channel = interaction.channel
-        if not isinstance(channel, discord.Thread):
-            raise UserFacingError("❌ このコマンドはスレッド内でのみ使用できます。")
-
-        if channel.owner_id != context.bot.user.id:
-            raise UserFacingError("❌ このスレッドは bot が作成したものではありません。")
 
         if not channel.name.startswith("✅"):
             await channel.edit(name=f"✅ {channel.name}")

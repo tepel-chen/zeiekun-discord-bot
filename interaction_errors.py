@@ -6,6 +6,10 @@ class UserFacingError(Exception):
     pass
 
 
+class UserFacingCheckFailure(app_commands.CheckFailure, UserFacingError):
+    pass
+
+
 def format_interaction_error(error: Exception) -> str:
     if isinstance(error, app_commands.CommandInvokeError) and error.original is not None:
         error = error.original

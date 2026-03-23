@@ -1,19 +1,23 @@
 import discord
 from discord import app_commands
 
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
 from db import (
     get_participant,
     get_root_channel_record,
     get_team_channel_record,
-    is_bot_created_channel,
     upsert_participant_record,
 )
 from interaction_errors import UserFacingError
 from services.split_service import SplitService
 
 
+@command_metadata(required_role="ctf", channel_scope="bot_ctf_channel")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_role_id)
+    """参加種別を切り替え、必要に応じてチームチャンネル権限を更新する。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="switchteam", description="参加種別を切り替える")
     @app_commands.describe(team="切り替え先の参加種別")
     @app_commands.choices(
@@ -24,8 +28,6 @@ def register_command(ctf_commands: app_commands.Group, context):
     )
     async def ctf_switchteam(interaction: discord.Interaction, team: app_commands.Choice[str]):
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         participant = get_participant(channel.id, interaction.user.id)
         if participant is None:

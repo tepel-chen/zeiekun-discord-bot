@@ -2,19 +2,15 @@ import discord
 from discord import app_commands
 from wonderwords import RandomWord
 
-from db import (
-    get_participant,
-    get_root_channel_record,
-    get_team_channel_record,
-    is_bot_created_channel,
-    upsert_participant_record,
-)
+from commands.permissions import command_metadata, require_registered_role
 from interaction_errors import UserFacingError
-from services.split_service import SplitService
 
 
+@command_metadata(required_role=None, channel_scope="any")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_role_id)
+    """ランダムなチーム名候補を生成する。"""
+
+    @require_registered_role(register_command, context)
     @ctf_commands.command(name="randomname", description="ランダムなチーム名を提案する")
     @app_commands.describe(count="個数")
     async def ctf_randomname(interaction: discord.Interaction, count: str):

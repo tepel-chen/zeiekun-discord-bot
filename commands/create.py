@@ -1,7 +1,8 @@
 import discord
 from discord import app_commands
 
-from db import add_channel_record, is_bot_created_channel
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
+from db import add_channel_record
 from interaction_errors import UserFacingError, send_interaction_error
 from services.join_service import build_join_view
 from services.channel_service import (
@@ -14,8 +15,12 @@ from services.channel_service import (
 from services.time_service import TimeParseError, parse_datetime_input, validate_time_range
 
 
+@command_metadata(required_role="creator", channel_scope="outside_ctf_channel")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_creator_role_id)
+    """新しいCTFチャンネルを作成し、参加ボタンを案内する。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="create", description="CTFチャンネルを作成する")
     @app_commands.describe(
         name="CTFの名前",
@@ -30,9 +35,6 @@ def register_command(ctf_commands: app_commands.Group, context):
     ):
         guild = interaction.guild
         assert guild is not None, "This command must be used in a guild"
-        current_channel = interaction.channel
-        if isinstance(current_channel, discord.TextChannel) and is_bot_created_channel(current_channel.id):
-            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネル内では使用できません。")
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         category = await ensure_category(guild, context.category_name)

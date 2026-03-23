@@ -1,20 +1,22 @@
 import discord
 from discord import app_commands
 
-from db import get_root_channel_record, get_team_channels, is_bot_created_channel, update_channel_record
-from interaction_errors import UserFacingError
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
+from db import get_root_channel_record, get_team_channels, update_channel_record
 from services.channel_service import ensure_category
 
 
+@command_metadata(required_role="creator", channel_scope="bot_ctf_channel")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_creator_role_id)
+    """CTFチャンネルをアーカイブカテゴリへ移動する。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="archive", description="CTFチャンネルをアーカイブする")
     async def move_category(interaction: discord.Interaction):
         guild = interaction.guild
         assert guild is not None, "This command must be used in a guild"
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         category = await ensure_category(guild, context.archive_category)
         root_record = get_root_channel_record(channel.id)

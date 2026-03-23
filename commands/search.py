@@ -3,7 +3,7 @@ from typing import Optional
 import discord
 from discord import app_commands
 
-from db import is_bot_created_channel
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
 from interaction_errors import UserFacingError
 from services.channel_service import (
     build_missing_search_response,
@@ -13,8 +13,12 @@ from services.channel_service import (
 )
 
 
+@command_metadata(required_role="ctf", channel_scope="bot_ctf_channel_or_thread")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_role_id)
+    """カテゴリや解決状態でスレッドを検索する。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="search", description="カテゴリ名でスレッドを検索する")
     @app_commands.describe(
         category="検索するカテゴリ名（未指定の場合は全カテゴリ）",
@@ -26,15 +30,14 @@ def register_command(ctf_commands: app_commands.Group, context):
         solved: Optional[bool] = None,
     ):
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
+        target_channel = channel.parent if isinstance(channel, discord.Thread) else channel
 
         search_category = normalize_category(category) if category else None
 
         matching_threads = []
-        async for thread in channel.archived_threads(limit=None):
+        async for thread in target_channel.archived_threads(limit=None):
             matching_threads.append(thread)
-        matching_threads.extend(channel.threads)
+        matching_threads.extend(target_channel.threads)
         matching_threads = filter_threads(matching_threads, search_category, solved)
 
         if not matching_threads:

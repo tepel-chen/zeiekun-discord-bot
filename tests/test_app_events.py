@@ -3,6 +3,8 @@ import importlib
 import types
 from unittest.mock import AsyncMock, Mock
 
+from interaction_errors import UserFacingCheckFailure
+
 
 app_module = importlib.import_module("app")
 config_module = importlib.import_module("config")
@@ -133,5 +135,21 @@ def test_app_command_error_formats_forbidden(monkeypatch):
 
     interaction.response.send_message.assert_awaited_once_with(
         "その操作をする権限がありません",
+        ephemeral=True,
+    )
+
+
+def test_app_command_error_formats_user_facing_check_failure():
+    bot, tree, _, _ = app_module.create_application(make_settings())
+    interaction = types.SimpleNamespace(
+        response=types.SimpleNamespace(send_message=AsyncMock(), is_done=lambda: False),
+        followup=types.SimpleNamespace(send=AsyncMock()),
+    )
+    error = UserFacingCheckFailure("❌ このコマンドを実行する権限がありません。")
+
+    asyncio.run(tree.on_error(interaction, error))
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "❌ このコマンドを実行する権限がありません。",
         ephemeral=True,
     )

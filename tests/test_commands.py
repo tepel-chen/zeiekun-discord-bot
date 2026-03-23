@@ -16,7 +16,9 @@ create_module = importlib.import_module("commands.create")
 archive_module = importlib.import_module("commands.archive")
 chal_module = importlib.import_module("commands.chal")
 disclose_module = importlib.import_module("commands.disclose")
+help_module = importlib.import_module("commands.help")
 leave_module = importlib.import_module("commands.leave")
+permissions_module = importlib.import_module("commands.permissions")
 players_module = importlib.import_module("commands.players")
 randomname_module = importlib.import_module("commands.randomname")
 search_module = importlib.import_module("commands.search")
@@ -41,10 +43,12 @@ class FakeTextChannel:
 
 
 class FakeThread:
-    def __init__(self, name="thread", owner_id=999, mention="#thread"):
+    def __init__(self, name="thread", owner_id=999, mention="#thread", parent=None, parent_id=None):
         self.name = name
         self.owner_id = owner_id
         self.mention = mention
+        self.parent = parent
+        self.parent_id = parent_id
         self.edit = AsyncMock()
 
 
@@ -69,8 +73,8 @@ def make_text_channel(channel_id=10, name="ctf-test", mention="#ctf-test", membe
     return FakeTextChannel(channel_id=channel_id, name=name, mention=mention, members=members)
 
 
-def make_thread(name="thread", owner_id=999):
-    return FakeThread(name=name, owner_id=owner_id)
+def make_thread(name="thread", owner_id=999, parent=None, parent_id=None):
+    return FakeThread(name=name, owner_id=owner_id, parent=parent, parent_id=parent_id)
 
 
 async def _empty_async_iter():
@@ -127,27 +131,20 @@ def test_create_command_success(monkeypatch):
 
 
 def test_create_command_rejects_bot_created_channel(monkeypatch):
-    monkeypatch.setattr(create_module.discord, "TextChannel", FakeTextChannel)
-    monkeypatch.setattr(create_module.discord, "Thread", FakeThread)
     group = app_commands.Group(name="ctf", description="CTF")
     create_module.register_command(group, make_context())
-    command = get_command(group, "create")
-    response = types.SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock())
     interaction = types.SimpleNamespace(
         guild=types.SimpleNamespace(id=44, text_channels=[], categories=[]),
         channel=make_text_channel(channel_id=77),
-        response=response,
-        followup=types.SimpleNamespace(send=AsyncMock()),
     )
-    monkeypatch.setattr(create_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(permissions_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(permissions_module, "is_bot_created_channel", lambda channel_id: True)
 
-    try:
-        asyncio.run(command.callback(interaction, "demo"))
-    except UserFacingError as exc:
-        assert str(exc) == "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。"
-    else:
-        raise AssertionError("UserFacingError was not raised")
-    response.defer.assert_not_awaited()
+    assert permissions_module.matches_channel_scope(interaction, "outside_ctf_channel", make_context()) is False
+    assert (
+        permissions_module.get_channel_scope_error(interaction, "outside_ctf_channel", make_context())
+        == "❌ このコマンドはbotによって作成されたチャンネル内では使用できません。"
+    )
 
 
 def test_create_command_stores_times(monkeypatch):
@@ -235,23 +232,18 @@ def test_create_command_rolls_back_discord_channel_when_db_write_fails(monkeypat
 
 
 def test_archive_command_rejects_non_bot_channel(monkeypatch):
-    monkeypatch.setattr(archive_module.discord, "TextChannel", FakeTextChannel)
-    group = app_commands.Group(name="ctf", description="CTF")
-    archive_module.register_command(group, make_context())
-    command = get_command(group, "archive")
     interaction = types.SimpleNamespace(
         guild=types.SimpleNamespace(),
         channel=types.SimpleNamespace(id=1),
-        response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(archive_module, "is_bot_created_channel", lambda channel_id: False)
+    monkeypatch.setattr(permissions_module.discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr(permissions_module, "is_bot_created_channel", lambda channel_id: False)
 
-    try:
-        asyncio.run(command.callback(interaction))
-    except UserFacingError as exc:
-        assert str(exc) == "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。"
-    else:
-        raise AssertionError("UserFacingError was not raised")
+    assert permissions_module.matches_channel_scope(interaction, "bot_ctf_channel", make_context()) is False
+    assert (
+        permissions_module.get_channel_scope_error(interaction, "bot_ctf_channel", make_context())
+        == "❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。"
+    )
 
 
 def test_archive_command_success(monkeypatch):
@@ -268,7 +260,6 @@ def test_archive_command_success(monkeypatch):
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     updates = []
-    monkeypatch.setattr(archive_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(archive_module, "ensure_category", AsyncMock(return_value="archive-category"))
     monkeypatch.setattr(
         archive_module,
@@ -297,6 +288,131 @@ def test_archive_command_success(monkeypatch):
     channel.send.assert_awaited_once_with("@user がこの CTF をアーカイブしました。")
 
 
+def test_help_command_shows_only_ctf_member_commands(monkeypatch):
+    group = app_commands.Group(name="ctf", description="CTF")
+    from commands.registry import register_commands
+
+    register_commands(group, make_context())
+    command = get_command(group, "help")
+    channel = make_text_channel(channel_id=10, name="ctf-demo")
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=2)]),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(importlib.import_module("commands.permissions").discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr("commands.permissions.is_bot_created_channel", lambda channel_id: True)
+
+    asyncio.run(command.callback(interaction))
+
+    interaction.response.send_message.assert_awaited_once()
+    embed = interaction.response.send_message.await_args.kwargs["embed"]
+    field_names = [field.name for field in embed.fields]
+    assert embed.title == "/ctf help"
+    assert "/ctf help" in field_names
+    assert "/ctf chal" in field_names
+    assert "/ctf switchteam" in field_names
+    assert "/ctf randomname" in field_names
+    assert "/ctf solve" not in field_names
+    assert "/ctf create" not in field_names
+    assert "/ctf archive" not in field_names
+    assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
+
+
+def test_help_command_shows_creator_commands_for_creator_role(monkeypatch):
+    group = app_commands.Group(name="ctf", description="CTF")
+    from commands.registry import register_commands
+
+    register_commands(group, make_context())
+    command = get_command(group, "help")
+    channel = make_text_channel(channel_id=10, name="ctf-demo")
+    interaction = types.SimpleNamespace(
+        channel=channel,
+        user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=1)]),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(importlib.import_module("commands.permissions").discord, "TextChannel", FakeTextChannel)
+    monkeypatch.setattr("commands.permissions.is_bot_created_channel", lambda channel_id: True)
+
+    asyncio.run(command.callback(interaction))
+
+    embed = interaction.response.send_message.await_args.kwargs["embed"]
+    field_names = [field.name for field in embed.fields]
+    assert "/ctf help" in field_names
+    assert "/ctf archive" in field_names
+    assert "/ctf randomname" in field_names
+    assert "/ctf create" not in field_names
+    assert "/ctf chal" not in field_names
+    assert "/ctf switchteam" not in field_names
+
+
+def test_help_command_shows_thread_only_commands_in_bot_thread(monkeypatch):
+    group = app_commands.Group(name="ctf", description="CTF")
+    from commands.registry import register_commands
+
+    register_commands(group, make_context())
+    command = get_command(group, "help")
+    thread = make_thread(name="crypto [Crypto]", owner_id=999)
+    interaction = types.SimpleNamespace(
+        channel=thread,
+        user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=2)]),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(importlib.import_module("commands.permissions").discord, "Thread", FakeThread)
+
+    asyncio.run(command.callback(interaction))
+
+    embed = interaction.response.send_message.await_args.kwargs["embed"]
+    field_names = [field.name for field in embed.fields]
+    assert "/ctf help" in field_names
+    assert "/ctf randomname" in field_names
+    assert "/ctf solve" in field_names
+    assert "/ctf chal" not in field_names
+    assert "/ctf switchteam" not in field_names
+
+
+def test_help_command_all_ignores_channel_scope(monkeypatch):
+    group = app_commands.Group(name="ctf", description="CTF")
+    from commands.registry import register_commands
+
+    register_commands(group, make_context())
+    command = get_command(group, "help")
+    interaction = types.SimpleNamespace(
+        channel=make_thread(name="crypto [Crypto]", owner_id=999),
+        user=types.SimpleNamespace(roles=[types.SimpleNamespace(id=2)]),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr("commands.permissions.is_bot_created_channel", lambda channel_id: True)
+
+    asyncio.run(command.callback(interaction, True))
+
+    embed = interaction.response.send_message.await_args.kwargs["embed"]
+    field_names = [field.name for field in embed.fields]
+    assert "/ctf chal" in field_names
+    assert "/ctf switchteam" in field_names
+    assert "/ctf solve" in field_names
+    assert "/ctf create" not in field_names
+
+
+def test_help_command_shows_randomname_without_role():
+    group = app_commands.Group(name="ctf", description="CTF")
+    from commands.registry import register_commands
+
+    register_commands(group, make_context())
+    command = get_command(group, "help")
+    interaction = types.SimpleNamespace(
+        channel=make_text_channel(channel_id=10, name="general"),
+        user=types.SimpleNamespace(roles=[]),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+
+    asyncio.run(command.callback(interaction))
+
+    embed = interaction.response.send_message.await_args.kwargs["embed"]
+    field_names = [field.name for field in embed.fields]
+    assert field_names == ["/ctf help", "/ctf randomname"]
+
+
 def test_chal_command_success(monkeypatch):
     monkeypatch.setattr(chal_module.discord, "TextChannel", FakeTextChannel)
     group = app_commands.Group(name="ctf", description="CTF")
@@ -308,7 +424,6 @@ def test_chal_command_success(monkeypatch):
         user=types.SimpleNamespace(mention="@user"),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(chal_module, "is_bot_created_channel", lambda channel_id: True)
 
     asyncio.run(command.callback(interaction, "web", "warmup"))
 
@@ -336,7 +451,6 @@ def test_leave_command_removes_participant_and_logs(monkeypatch):
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     deleted = []
-    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         leave_module,
         "get_participant",
@@ -375,7 +489,6 @@ def test_leave_command_removes_permissions_from_split_channels(monkeypatch):
         user=types.SimpleNamespace(id=42, mention="@user"),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         leave_module,
         "get_participant",
@@ -412,7 +525,6 @@ def test_leave_command_rejects_non_participants(monkeypatch):
         user=types.SimpleNamespace(id=42, mention="@user"),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(leave_module, "get_participant", lambda channel_id, user_id: None)
 
     try:
@@ -434,7 +546,6 @@ def test_leave_command_rejects_after_disclose(monkeypatch):
         user=types.SimpleNamespace(id=42, mention="@user"),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         leave_module,
         "get_participant",
@@ -468,11 +579,33 @@ def test_search_command_returns_matches(monkeypatch):
         channel=channel,
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(search_module, "is_bot_created_channel", lambda channel_id: True)
 
     asyncio.run(command.callback(interaction, "web", None))
 
     interaction.response.send_message.assert_awaited_once()
+    message = interaction.response.send_message.await_args.args[0]
+    assert "#warmup" in message
+    assert "#solved-web" in message
+
+
+def test_search_command_returns_matches_from_thread_parent():
+    search_module.discord.Thread = FakeThread
+    group = app_commands.Group(name="ctf", description="CTF")
+    search_module.register_command(group, make_context())
+    command = get_command(group, "search")
+    parent_channel = make_text_channel()
+    parent_channel.threads = [types.SimpleNamespace(name="✅ web-1 [Web]", mention="#solved-web")]
+    parent_channel.archived_threads = lambda limit=None: async_iter(
+        [types.SimpleNamespace(name="warmup [Web]", mention="#warmup")]
+    )
+    thread = make_thread(name="crypto [Crypto]", owner_id=999, parent=parent_channel, parent_id=parent_channel.id)
+    interaction = types.SimpleNamespace(
+        channel=thread,
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+
+    asyncio.run(command.callback(interaction, "web", None))
+
     message = interaction.response.send_message.await_args.args[0]
     assert "#warmup" in message
     assert "#solved-web" in message
@@ -490,7 +623,6 @@ def test_ctfconf_command_updates_times(monkeypatch):
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     updates = []
-    monkeypatch.setattr(ctfconf_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         ctfconf_module,
         "get_root_channel_record",
@@ -529,7 +661,6 @@ def test_ctfconf_command_rejects_end_before_existing_start(monkeypatch):
         channel=channel,
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(ctfconf_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         ctfconf_module,
         "get_root_channel_record",
@@ -556,7 +687,6 @@ def test_ctfconf_command_rejects_teammode_change_after_disclose(monkeypatch):
     command = get_command(group, "ctfconf")
     channel = make_text_channel()
     interaction = types.SimpleNamespace(channel=channel, response=types.SimpleNamespace(send_message=AsyncMock()))
-    monkeypatch.setattr(ctfconf_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         ctfconf_module,
         "get_root_channel_record",
@@ -584,7 +714,6 @@ def test_disclose_command_success(monkeypatch):
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     disclose = AsyncMock(return_value=True)
-    monkeypatch.setattr(disclose_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         disclose_module,
         "get_root_channel_record",
@@ -613,7 +742,6 @@ def test_disclose_command_allows_non_split_ctf(monkeypatch):
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     disclose = AsyncMock(return_value=True)
-    monkeypatch.setattr(disclose_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         disclose_module,
         "get_root_channel_record",
@@ -634,7 +762,6 @@ def test_disclose_command_rejects_before_end(monkeypatch):
     disclose_module.register_command(group, make_context())
     command = get_command(group, "disclose")
     interaction = types.SimpleNamespace(channel=make_text_channel(channel_id=45), response=types.SimpleNamespace(send_message=AsyncMock()))
-    monkeypatch.setattr(disclose_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         disclose_module,
         "get_root_channel_record",
@@ -660,7 +787,6 @@ def test_time_command_displays_schedule(monkeypatch):
         channel=channel,
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(time_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         time_module,
         "get_root_channel_record",
@@ -680,6 +806,34 @@ def test_time_command_displays_schedule(monkeypatch):
     assert "終了: <t:1774062000:F> (<t:1774062000:R>)" in message
 
 
+def test_time_command_displays_schedule_from_thread(monkeypatch):
+    time_module.discord.Thread = FakeThread
+    group = app_commands.Group(name="ctf", description="CTF")
+    time_module.register_command(group, make_context())
+    command = get_command(group, "time")
+    thread = make_thread(name="crypto [Crypto]", owner_id=999, parent_id=45)
+    interaction = types.SimpleNamespace(
+        channel=thread,
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(
+        time_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(
+            channel_name="ctf-demo",
+            start_time=datetime(2026, 3, 20, 10, 0),
+            end_time=datetime(2026, 3, 21, 12, 0),
+        ) if channel_id == 45 else None,
+    )
+    monkeypatch.setattr(time_module, "tokyo_now", lambda: datetime(2026, 3, 20, 9, 0))
+
+    asyncio.run(command.callback(interaction))
+
+    message = interaction.response.send_message.await_args.args[0]
+    assert "開始: <t:1773968400:F> (<t:1773968400:R>)" in message
+    assert "終了: <t:1774062000:F> (<t:1774062000:R>)" in message
+
+
 def test_players_command_displays_grouped_participants(monkeypatch):
     monkeypatch.setattr(players_module.discord, "TextChannel", FakeTextChannel)
     group = app_commands.Group(name="ctf", description="CTF")
@@ -690,7 +844,6 @@ def test_players_command_displays_grouped_participants(monkeypatch):
         channel=channel,
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(players_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         players_module,
         "get_participants",
@@ -698,6 +851,33 @@ def test_players_command_displays_grouped_participants(monkeypatch):
             types.SimpleNamespace(user_id=10, participation_type="play2win"),
             types.SimpleNamespace(user_id=20, participation_type="play4fun"),
         ],
+    )
+
+    asyncio.run(command.callback(interaction))
+
+    interaction.response.send_message.assert_awaited_once_with(
+        "✅ 参加者一覧 (合計: 2人)\nplay2win: 1人\n<@10>\nplay4fun: 1人\n<@20>",
+        ephemeral=True,
+    )
+
+
+def test_players_command_displays_grouped_participants_from_thread(monkeypatch):
+    players_module.discord.Thread = FakeThread
+    group = app_commands.Group(name="ctf", description="CTF")
+    players_module.register_command(group, make_context())
+    command = get_command(group, "players")
+    thread = make_thread(name="crypto [Crypto]", owner_id=999, parent_id=45)
+    interaction = types.SimpleNamespace(
+        channel=thread,
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(
+        players_module,
+        "get_participants",
+        lambda channel_id: [
+            types.SimpleNamespace(user_id=10, participation_type="play2win"),
+            types.SimpleNamespace(user_id=20, participation_type="play4fun"),
+        ] if channel_id == 45 else [],
     )
 
     asyncio.run(command.callback(interaction))
@@ -772,7 +952,6 @@ def test_switchteam_command_updates_participation_type(monkeypatch):
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     calls = []
-    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         switchteam_module,
         "get_participant",
@@ -808,7 +987,6 @@ def test_switchteam_command_noops_when_team_is_unchanged(monkeypatch):
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
     calls = []
-    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         switchteam_module,
         "get_participant",
@@ -846,7 +1024,6 @@ def test_switchteam_command_notifies_both_channels_when_split(monkeypatch):
         user=types.SimpleNamespace(id=10, mention="@user"),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         switchteam_module,
         "get_participant",
@@ -881,7 +1058,6 @@ def test_switchteam_command_rejects_non_participants(monkeypatch):
         user=types.SimpleNamespace(id=10),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(switchteam_module, "get_participant", lambda channel_id, user_id: None)
     choice = app_commands.Choice(name="play2win", value="play2win")
 
@@ -903,7 +1079,6 @@ def test_switchteam_command_rejects_after_disclose(monkeypatch):
         user=types.SimpleNamespace(id=10),
         response=types.SimpleNamespace(send_message=AsyncMock()),
     )
-    monkeypatch.setattr(switchteam_module, "is_bot_created_channel", lambda channel_id: True)
     monkeypatch.setattr(
         switchteam_module,
         "get_participant",

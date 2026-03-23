@@ -1,7 +1,8 @@
 import discord
 from discord import app_commands
 
-from db import UPDATE_UNSET, get_root_channel_record, is_bot_created_channel, update_channel_record
+from commands.permissions import command_metadata, require_registered_context, require_registered_role
+from db import UPDATE_UNSET, get_root_channel_record, update_channel_record
 from interaction_errors import UserFacingError
 from services.split_service import SplitService
 from services.time_service import (
@@ -13,8 +14,12 @@ from services.time_service import (
 )
 
 
+@command_metadata(required_role="creator", channel_scope="bot_ctf_channel")
 def register_command(ctf_commands: app_commands.Group, context):
-    @app_commands.checks.has_role(context.ctf_creator_role_id)
+    """CTFの開始終了時刻やチームモードを更新する。"""
+
+    @require_registered_role(register_command, context)
+    @require_registered_context(register_command, context)
     @ctf_commands.command(name="ctfconf", description="CTF設定を更新する")
     @app_commands.describe(
         start_time="開始時刻 (`tomorrow 21:00`, `3/20 18:00` など)",
@@ -35,8 +40,6 @@ def register_command(ctf_commands: app_commands.Group, context):
         teammode: app_commands.Choice[str] | None = None,
     ):
         channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or not is_bot_created_channel(channel.id):
-            raise UserFacingError("❌ このコマンドはbotによって作成されたチャンネルでのみ使用できます。")
 
         if start_time is None and end_time is None and teammode is None:
             raise UserFacingError("❌ 更新する値を1つ以上指定してください。")
