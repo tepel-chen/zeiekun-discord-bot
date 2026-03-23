@@ -16,6 +16,7 @@ create_module = importlib.import_module("commands.create")
 archive_module = importlib.import_module("commands.archive")
 chal_module = importlib.import_module("commands.chal")
 disclose_module = importlib.import_module("commands.disclose")
+leave_module = importlib.import_module("commands.leave")
 players_module = importlib.import_module("commands.players")
 randomname_module = importlib.import_module("commands.randomname")
 search_module = importlib.import_module("commands.search")
@@ -34,6 +35,7 @@ class FakeTextChannel:
         self.create_thread = AsyncMock()
         self.edit = AsyncMock()
         self.delete = AsyncMock()
+        self.set_permissions = AsyncMock()
         self.threads = []
         self.archived_threads = lambda limit=None: _empty_async_iter()
 
@@ -319,6 +321,137 @@ def test_chal_command_success(monkeypatch):
         "✅ @user さんがスレッドを作成しました",
         ephemeral=False,
     )
+
+
+def test_leave_command_removes_participant_and_logs(monkeypatch):
+    monkeypatch.setattr(leave_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    leave_module.register_command(group, make_context())
+    command = get_command(group, "leave")
+    channel = make_text_channel(channel_id=10, name="ctf-root")
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(get_channel=lambda channel_id: {10: channel}.get(channel_id)),
+        channel=channel,
+        user=types.SimpleNamespace(id=42, mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    deleted = []
+    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        leave_module,
+        "get_participant",
+        lambda channel_id, user_id: types.SimpleNamespace(user_id=user_id, participation_type="play4fun"),
+    )
+    monkeypatch.setattr(
+        leave_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=10, split_completed=0),
+    )
+    monkeypatch.setattr(leave_module, "get_team_channel_record", lambda root_channel_id, team_type: None)
+    monkeypatch.setattr(
+        leave_module,
+        "delete_participant_record",
+        lambda channel_id, user_id: deleted.append((channel_id, user_id)) or True,
+    )
+
+    asyncio.run(command.callback(interaction))
+
+    assert deleted == [(10, 42)]
+    channel.set_permissions.assert_awaited_once_with(interaction.user, overwrite=None)
+    interaction.response.send_message.assert_awaited_once_with("✅ CTFから退出しました。", ephemeral=True)
+    channel.send.assert_awaited_once_with("@user がこの CTF から退出しました。")
+
+
+def test_leave_command_removes_permissions_from_split_channels(monkeypatch):
+    monkeypatch.setattr(leave_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    leave_module.register_command(group, make_context())
+    command = get_command(group, "leave")
+    root_channel = make_text_channel(channel_id=45, name="ctf-demo-p4f")
+    p2w_channel = make_text_channel(channel_id=46, name="ctf-demo-p2w")
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(get_channel=lambda channel_id: {45: root_channel, 46: p2w_channel}.get(channel_id)),
+        channel=root_channel,
+        user=types.SimpleNamespace(id=42, mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        leave_module,
+        "get_participant",
+        lambda channel_id, user_id: types.SimpleNamespace(user_id=user_id, participation_type="play2win"),
+    )
+    monkeypatch.setattr(
+        leave_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=45, split_completed=1),
+    )
+    monkeypatch.setattr(
+        leave_module,
+        "get_team_channel_record",
+        lambda root_channel_id, team_type: types.SimpleNamespace(channel_id=46),
+    )
+    monkeypatch.setattr(leave_module, "delete_participant_record", lambda channel_id, user_id: True)
+
+    asyncio.run(command.callback(interaction))
+
+    root_channel.set_permissions.assert_awaited_once_with(interaction.user, overwrite=None)
+    p2w_channel.set_permissions.assert_awaited_once_with(interaction.user, overwrite=None)
+    root_channel.send.assert_awaited_once_with("@user がこの CTF から退出しました。")
+    p2w_channel.send.assert_awaited_once_with("@user がこの CTF から退出しました。")
+
+
+def test_leave_command_rejects_non_participants(monkeypatch):
+    monkeypatch.setattr(leave_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    leave_module.register_command(group, make_context())
+    command = get_command(group, "leave")
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(),
+        channel=make_text_channel(channel_id=45),
+        user=types.SimpleNamespace(id=42, mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(leave_module, "get_participant", lambda channel_id, user_id: None)
+
+    try:
+        asyncio.run(command.callback(interaction))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ まだこのCTFに参加していません。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
+
+
+def test_leave_command_rejects_after_disclose(monkeypatch):
+    monkeypatch.setattr(leave_module.discord, "TextChannel", FakeTextChannel)
+    group = app_commands.Group(name="ctf", description="CTF")
+    leave_module.register_command(group, make_context())
+    command = get_command(group, "leave")
+    interaction = types.SimpleNamespace(
+        guild=types.SimpleNamespace(),
+        channel=make_text_channel(channel_id=45),
+        user=types.SimpleNamespace(id=42, mention="@user"),
+        response=types.SimpleNamespace(send_message=AsyncMock()),
+    )
+    monkeypatch.setattr(leave_module, "is_bot_created_channel", lambda channel_id: True)
+    monkeypatch.setattr(
+        leave_module,
+        "get_participant",
+        lambda channel_id, user_id: types.SimpleNamespace(user_id=user_id, participation_type="play4fun"),
+    )
+    monkeypatch.setattr(
+        leave_module,
+        "get_root_channel_record",
+        lambda channel_id: types.SimpleNamespace(channel_id=45, disclosed=1),
+    )
+
+    try:
+        asyncio.run(command.callback(interaction))
+    except UserFacingError as exc:
+        assert str(exc) == "❌ disclose 後は leave できません。"
+    else:
+        raise AssertionError("UserFacingError was not raised")
 
 
 def test_search_command_returns_matches(monkeypatch):

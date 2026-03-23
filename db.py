@@ -283,3 +283,21 @@ def get_participant(channel_id: int, user_id: int) -> CTFParticipant | None:
                 CTFParticipant.user_id == user_id,
             )
         ).scalar_one_or_none()
+
+
+def delete_participant_record(channel_id: int, user_id: int) -> bool:
+    root_record = get_root_channel_record(channel_id)
+    root_channel_id = root_record.channel_id if root_record is not None else channel_id
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        record = session.execute(
+            select(CTFParticipant).where(
+                CTFParticipant.channel_id == root_channel_id,
+                CTFParticipant.user_id == user_id,
+            )
+        ).scalar_one_or_none()
+        if record is None:
+            return False
+        session.delete(record)
+        session.commit()
+        return True
